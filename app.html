@@ -140,8 +140,8 @@
     justify-content: flex-end;     /* the panel sits at the bottom, R1 nearest caption */
     position: relative;
     /* Clearance for the record button, which is fixed at the top-right and so sits
-       outside the flow: without this the first line of a pasted article renders
-       under the mic glyph — and, at narrow widths, becomes unclickable. */
+       outside the flow: without this the band's content renders under the mic
+       glyph — and, at narrow widths, becomes unclickable. */
     padding-top: 52px;
     background: color-mix(in srgb, var(--bg) 55%, var(--surface));
   }
@@ -210,102 +210,11 @@
     z-index: 5;
   }
 
-  /* Pasted-text reading view — fills the main space ABOVE the explanation panel
-     (order:-1). Holds the article/essay the user pastes (⌘V); every word is a
-     markable .word span, so the same click-a-word / drag-a-phrase explanation
-     flow works here, just with the text's own context window. */
-  .text-window {
-    order: -1;
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow-y: auto;
-    padding: 22px max(18px, 4vw) 28px;
-    font-family: var(--serif);
-    font-size: 18px;
-    line-height: 1.75;
-    color: var(--text);
-    user-select: none;
-    -webkit-user-select: none;
-    -webkit-touch-callout: none;   /* no iOS long-press callout — the hold is ours */
-  }
-  .text-window[hidden] { display: none; }
-  .text-window .rt-p { margin: 0 auto 16px; max-width: 70ch; }
-  .text-window .rt-p:last-child { margin-bottom: 0; }
-  /* Headings carried over from the pasted HTML (h1–h6). Centred, and only a
-     hair larger than body — source headings run ~1.12–1.17× body, distinguished
-     mostly by centring + bold, NOT by big type. Still built from the same
-     markable .word spans, so clicking a heading word explains it too. */
-  .text-window .rt-h {
-    margin: 18px auto 12px; max-width: 70ch;
-    /* Normal weight on purpose: the <hN> UA default is bold, but whether a
-       heading actually reads as bold is decided per-word by .word.b (from the
-       source's real font-weight), so a non-bold title stays non-bold. */
-    text-align: center; font-weight: 400; line-height: 1.35; color: var(--text);
-  }
-  .text-window .rt-h:first-child { margin-top: 0; }
-  .text-window h1.rt-h { font-size: 1.2em; }
-  .text-window h2.rt-h { font-size: 1.12em; }
-  .text-window h3.rt-h { font-size: 1.12em; }
-  .text-window h4.rt-h, .text-window h5.rt-h, .text-window h6.rt-h { font-size: 1.05em; }
-  /* Inline emphasis carried over from the paste, applied straight onto the
-     .word span so the word stays individually clickable/markable. */
-  .text-window .word.b { font-weight: 700; }
-  .text-window .word.i { font-style: italic; }
-
-  /* Byline + date, sitting under the title. Set in the neutral UI sans (not the
-     body serif) and dimmed, the way a masthead credit reads; centred to sit
-     under the centred title. Comes from an <address> block in the pasted HTML
-     (htmlToBlocks maps ADDRESS -> "byline"), so its words are never bold/italic. */
-  .text-window .rt-byline {
-    max-width: 70ch; margin: -2px auto 22px;
-    font-family: var(--sans); font-size: 0.8em; letter-spacing: 0.01em;
-    color: var(--text-2); text-align: center;
-  }
-  .text-window .rt-byline .word { font-weight: 400; font-style: normal; }
-
-  /* A figure photo from the pasted article — the reading view's only non-text block.
-     The SERVER never fetches it; the browser would load it straight from its origin.
-     The page CSP (see server.go) allows no remote image host, so today only a data:
-     URI actually paints and a remote photo leaves the placeholder box below — add a
-     host to img-src to bring one back. Only an <img> with real alt text gets this far,
-     so trackers / promo thumbnails never render. Constrained to the reading column
-     and centred, like the paragraphs. */
-  .text-window .rt-fig { margin: 22px auto 0; max-width: 70ch; }
-  .text-window .rt-fig:first-child { margin-top: 0; }
-  .text-window .rt-img {
-    display: block; width: 100%; height: auto;
-    border-radius: 8px; background: var(--surface-2);
-  }
-  /* Caption (a <figcaption>'s text, including its trailing photo credit). Smaller
-     and dimmed so it reads as secondary to the body, tucked right under its image.
-     Its words are still individual .word spans, so a caption word explains like
-     any other. */
-  .text-window .rt-cap {
-    max-width: 70ch; margin: 8px auto 18px;
-    font-size: 0.76em; line-height: 1.5; color: var(--text-dim);
-  }
-  .text-window .rt-cap .word { padding: 1px 1px; margin: 0 -1px; }
-
-  /* Placeholder for an embed that can't render here (a YouTube video, a data
-     widget — the page CSP blocks third-party frames). A quiet dashed note in the
-     reading column carrying the embed's own title, so a section that was built
-     around a video still reads as one instead of a heading over nothing. */
-  .text-window .rt-embed {
-    max-width: 70ch; margin: 14px auto 18px;
-    padding: 13px 16px;
-    border: 1px dashed var(--border); border-radius: 8px;
-    font-family: var(--sans); font-size: 0.84em; color: var(--text-2);
-    text-align: center;
-  }
-
   /* ---------- video stage (YouTube sources · desktop only) ----------
-     Video mode shows the picture where the reading view goes: the stage takes the
-     SAME slot in the band (order:-1, flex:1 1 auto), so "on" gives it the whole
-     main region minus the explanation panel, and "off" hands the slot straight
-     back to the text. Exactly one of the two is ever visible (applyVideoMode).
-     Letterboxed on pure black — not the warm page background — since that is what
-     reads as "picture" behind a frame that can't fill the box; object-fit keeps the
-     frame whole at any panel height. */
+     Fills the main region ABOVE the explanation panel while a video is shown
+     (order:-1, flex:1 1 auto). Letterboxed on pure black — not the warm page
+     background — since that is what reads as "picture" behind a frame that
+     can't fill the box; object-fit keeps the frame whole at any panel height. */
   .video-window {
     order: -1;
     flex: 1 1 auto;
@@ -957,19 +866,6 @@
       border-radius: 2px;
       transform: translate(-50%, -50%);
     }
-    /* The reading view flows at its natural height and the page itself scrolls
-       (no internal scroll box), matching the rest of the mobile band.
-       Bottom clearance = the normal reading gap (28px, matching the base padding)
-       PLUS the player's reserved height: the player is fixed and the explanation
-       panel is sticky above it (both cover the bottom of the viewport), and a
-       trailing MARGIN isn't counted as scrollable overflow — so without scrollable
-       padding here the article's last lines could never be scrolled out from behind
-       them. When no audio is loaded the player is hidden and --player-h is 0, so
-       this collapses back to the plain 28px gap. */
-    .text-window {
-      flex: 0 0 auto; overflow: visible;
-      padding-bottom: calc(28px + var(--player-h, 130px));
-    }
     /* Video mode is desktop-only (the toggle isn't even reachable here) — but if a
        desktop window is dragged narrow while it's on, the stage goes away instantly
        rather than squeezing the panel + player off the screen. The JS also releases
@@ -1101,12 +997,11 @@
          generated — no text, just the animation. -->
     <div class="band-loading" id="ln-band-loading" hidden aria-label="Loading"><div class="spinner"></div></div>
 
-    <!-- Video stage — YouTube sources, desktop only. Shares the reading view's
-         slot: video mode shows this and hides .text-window, off does the reverse.
-         The <video> is MUTED and slaved to #ln-audio (the clock the transcript is
-         aligned to), holds no blob — its src is a plain URL the browser
-         Range-streams — and has that src removed the moment video mode goes off,
-         so nothing accumulates across a session. -->
+    <!-- Video stage — YouTube sources, desktop only. The <video> is MUTED and
+         slaved to #ln-audio (the clock the transcript is aligned to), holds no
+         blob — its src is a plain URL the browser Range-streams — and has that
+         src removed the moment video mode goes off, so nothing accumulates
+         across a session. -->
     <div class="video-window" id="ln-video" hidden aria-label="Video">
       <!-- No tabindex on purpose: a <video> without `controls` isn't focusable,
            and tabindex="-1" would make it CLICK-focusable — which is what put
@@ -1116,12 +1011,6 @@
              disablepictureinpicture></video>
       <div class="video-status" id="ln-video-status" hidden></div>
     </div>
-
-    <!-- Pasted-text reading view (paste with ⌘V / Ctrl+V to fill it). Hidden
-         until text is pasted; renders the text as markable .word spans sitting
-         above the explanation panel, sharing the same panel + explanation flow
-         as the audio caption. -->
-    <div class="text-window" id="ln-text" hidden aria-label="Pasted text"></div>
 
   </div>
 

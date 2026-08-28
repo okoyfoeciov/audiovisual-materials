@@ -255,7 +255,7 @@
   function revealActive() { return wordReveal; }
   let tokens = [], windowLayout = [], frozen = false;
 
-  // A single explanation panel off the caption / pasted text (O). Each new O
+  // A single explanation panel off the caption (O). Each new O
   // selection refreshes it (overrides the previous one); inside it the answers
   // form a drill-down chain R1 → R2 → … (one round each). Picking a word/phrase
   // in round R_k regenerates R_(k+1) and drops every round after it, so the chain
@@ -698,9 +698,7 @@
     for (const tk of tokens) if (tk.type === "word") tk.marked = false;
     frozen = false;
     paintWindow();
-    // A caption lookup reuses the same single panel, so drop any pasted-text
-    // highlight too — the lit word should always match what the panel explains.
-    if (items.length) { clearTextMarks(); startNewExplain(items); }
+    if (items.length) startNewExplain(items);
   }
   window.addEventListener("mouseup", finishCaptionGesture);
 
@@ -772,8 +770,7 @@
     }
   }
 
-  // Group consecutive marked words into items. Works on any word/sep token
-  // array — the caption's `tokens` (default) or the pasted text's `textTokens`.
+  // Group consecutive marked words into items from the caption's token array.
   function collectMarkedItems(tk = tokens) {
     const items = [];
     let i = 0;
@@ -894,7 +891,7 @@
 
   // Wipe every response mark across all rounds. A new pick starts from a clean
   // slate so only one contiguous word/phrase is ever selected — the same
-  // one-highlight-at-a-time model as O (the caption / pasted text).
+  // one-highlight-at-a-time model as O (the caption).
   function clearResponseMarks(panel) {
     panel.responseMarks.clear();
     for (const sp of panel.contentEl.querySelectorAll(".response-word.marked")) sp.classList.remove("marked");
@@ -2576,504 +2573,6 @@
     });
   });
 
-  /* ---------- pasted-text reading mode ---------- */
-
-  // A SECOND source for the SAME explanation panel: the user pastes a text
-  // (⌘V / Ctrl+V) and reads it in the main space. Every word becomes a markable
-  // .word span, so the click-a-word / drag-a-phrase flow is identical to the
-  // caption's. The ONE difference is the CONTEXT WINDOW sent to /api/explain:
-  // here it's SENT_WINDOW sentences before + the selection's own sentence(s) +
-  // SENT_WINDOW after, drawn from the PASTED text (never the audio transcript).
-  //
-  // Context isolation is automatic: each panel snapshots its context into
-  // panel.threadText at selection time (see startNewExplain / startNewExplainText)
-  // and the backend is source-agnostic, so a text pick carries text context and
-  // an audio pick carries audio context — they never mix. A fresh pick of either
-  // kind resets the single shared panel (nextPanelForSelection), so switching
-  // between the two clears the panel. Follow-ups stay inside one panel and keep
-  // that pick's context.
-
-  const textEl = document.getElementById("ln-text");
-
-  const SENT_WINDOW = 5;        // sentences kept on EACH side of the selection
-  const MAX_PASTE = 600000;     // ~600k-char guard so a giant paste can't hang
-  const MAX_HTML = 3000000;     // rich-paste guard (HTML markup is far bulkier)
-
-  let pastedText = "";          // raw pasted text (normalised newlines)
-  let textSentences = [];       // [sentenceString] — the context-window units
-  let textTokens = [];          // [{type:'word'|'sep'|'break', value?, marked?, sent?}]
-  let textSpans = [];           // token index -> rendered .word element (sparse)
-  let textActive = false;       // is a pasted text currently shown?
-  let textDrag = null;          // in-progress drag selection over the text
-
-  // Split a paragraph into sentences — the same lightweight rule the backend
-  // uses for its plain-text fallback: break after . ! ? … + whitespace.
-  function splitSentences(para) {
-    const out = [];
-    for (const s of para.split(/(?<=[.!?…])\s+/)) {
-      const t = s.trim();
-      if (t) out.push(t);
-    }
-    return out.length ? out : (para.trim() ? [para.trim()] : []);
-  }
-
-  // Offset-preserving version of the same sentence rule, used by the HTML paste
-  // path. Returns [start, end) ranges that TILE the whole string (every char is
-  // in exactly one range), so a token's character offset maps cleanly to the
-  // sentence it belongs to — which is what drives the context window. The split
-  // is the same as splitSentences (break after . ! ? … + whitespace), but the
-  // trailing whitespace stays attached to the preceding sentence's range.
-  function sentenceRanges(text) {
-    const ranges = [];
-    const re = /[.!?…]+\s+/g;
-    let start = 0, m;
-    while ((m = re.exec(text)) !== null) {
-      const end = m.index + m[0].length;
-      ranges.push([start, end]);
-      start = end;
-    }
-    if (start < text.length) ranges.push([start, text.length]);
-    if (!ranges.length) ranges.push([0, text.length]);
-    return ranges;
-  }
-
-  // Turn raw pasted text into the token stream + the sentence list. Paragraphs
-  // (blank-line separated) become 'break' tokens; wrapped single newlines inside
-  // a paragraph are joined into one flowing line. Each word token carries the
-  // index of the sentence it belongs to, which drives the context window.
-  function buildTextModel(text) {
-    textTokens = [];
-    textSentences = [];
-    let firstPara = true;
-    for (const rawPara of text.split(/\n{2,}/)) {
-      const para = rawPara.replace(/\s*\n\s*/g, " ").trim();
-      if (!para) continue;
-      if (!firstPara) textTokens.push({ type: "break" });
-      firstPara = false;
-      const sents = splitSentences(para);
-      for (let s = 0; s < sents.length; s++) {
-        const sentIdx = textSentences.length;
-        textSentences.push(sents[s]);
-        for (const tok of tokenize(sents[s])) {
-          textTokens.push(tok.type === "word"
-            ? { type: "word", value: tok.value, marked: false, sent: sentIdx }
-            : { type: "sep", value: tok.value });
-        }
-        if (s < sents.length - 1) textTokens.push({ type: "sep", value: " " });
-      }
-    }
-  }
-
-  // ---- rich (HTML) paste ----------------------------------------------------
-  //
-  // The clipboard usually carries a text/html flavour alongside the plain text.
-  // We read ONLY its structure — block boundaries (p / h1–h6 / li / …) and the
-  // inline bold/italic state — and re-emit our OWN controlled spans. The pasted
-  // markup is never injected into the page, so there is no XSS surface: we touch
-  // tag names and text node values only.
-
-  // Walk the parsed HTML into an ordered list of blocks. Each block is
-  //   { tag: "p" | "h1".."h6", text: <plain text>, runs: [{len, b, i}] }
-  // where `runs` tile `text` and record the bold/italic state of each slice.
-  function htmlToBlocks(html) {
-    const BLOCK = { P:1, DIV:1, H1:1, H2:1, H3:1, H4:1, H5:1, H6:1, LI:1,
-      BLOCKQUOTE:1, SECTION:1, ARTICLE:1, HEADER:1, FOOTER:1, MAIN:1, ASIDE:1,
-      NAV:1, UL:1, OL:1, DL:1, DT:1, DD:1, TABLE:1, TR:1, FIGURE:1,
-      FIGCAPTION:1, HR:1, PRE:1, ADDRESS:1, DETAILS:1, SUMMARY:1 };
-    const HEADING = { H1:1, H2:1, H3:1, H4:1, H5:1, H6:1 };
-    const SKIP = { SCRIPT:1, STYLE:1, HEAD:1, NOSCRIPT:1, TEMPLATE:1, TITLE:1 };
-
-    let doc;
-    try { doc = new DOMParser().parseFromString(html, "text/html"); }
-    catch (_) { return []; }
-    const root = doc && (doc.body || doc.documentElement);
-    if (!root) return [];
-
-    const blocks = [];
-    let curTag = "p";
-    let parts = [];                       // [{text, b, i}] for the open block
-
-    function flush() {
-      while (parts.length && !parts[0].text.trim()) parts.shift();
-      while (parts.length && !parts[parts.length - 1].text.trim()) parts.pop();
-      if (parts.length) {
-        parts[0] = { text: parts[0].text.replace(/^\s+/, ""), b: parts[0].b, i: parts[0].i };
-        const li = parts.length - 1;
-        parts[li] = { text: parts[li].text.replace(/\s+$/, ""), b: parts[li].b, i: parts[li].i };
-      }
-      const text = parts.map((p) => p.text).join("");
-      if (text.trim()) {
-        blocks.push({ tag: curTag, text, runs: parts.map((p) => ({ len: p.text.length, b: p.b, i: p.i })) });
-      }
-      parts = [];
-    }
-
-    function visit(node, b, i) {
-      for (let child = node.firstChild; child; child = child.nextSibling) {
-        if (child.nodeType === 3) {                       // text node
-          const t = child.nodeValue.replace(/\s+/g, " "); // collapse like HTML does
-          if (t) parts.push({ text: t, b, i });
-        } else if (child.nodeType === 1) {                // element
-          const tag = child.tagName;
-          if (SKIP[tag]) continue;
-          if (tag === "BR") { parts.push({ text: " ", b, i }); continue; }
-          // An <img> is the one non-text block the reading view keeps. Emit it
-          // only when it carries real alt text on an https src: that single test
-          // drops tracking pixels, spacers and related-story promo thumbnails (all
-          // alt="") while keeping the article's actual figure photos. The server
-          // never touches it — the browser would load it straight from its origin,
-          // which the page CSP's img-src currently allows for no remote host.
-          if (tag === "IMG") {
-            const alt = (child.getAttribute("alt") || "").trim();
-            const src = (child.getAttribute("src") || "").trim();
-            if (alt && /^https:\/\//i.test(src)) { flush(); blocks.push({ tag: "img", src, alt }); }
-            continue;
-          }
-          // An <iframe> embed (YouTube video, data viz, …) can't render here — the
-          // page CSP blocks third-party frames outright. Left alone it would vanish
-          // and strand its section heading with nothing under it. So emit a labelled
-          // placeholder (the embed's own title, when it has one) so the reader knows
-          // a video/embed belongs there.
-          if (tag === "IFRAME") {
-            const label = (child.getAttribute("title") || "").trim();
-            const isrc = child.getAttribute("src") || "";
-            const fig = child.closest && child.closest("figure");
-            const video = /youtube|youtu\.be|vimeo|\/embed\//i.test(isrc)
-              || /is-type-video/.test((fig && fig.className) || "");
-            flush();
-            blocks.push({ tag: "embed", label, video });
-            continue;
-          }
-          // Emphasis = inherited, then the tag's own contribution, then an
-          // explicit inline style wins (browsers inline computed weight/style
-          // when copying, so this is where the source's REAL look comes from).
-          // Headings are bold by UA default — but the source often overrides a
-          // title/byline back to normal via CSS, which copy turns into an inline
-          // `font-weight: normal/400`; honouring that is what keeps a non-bold
-          // title from rendering bold here.
-          let nb = b || tag === "B" || tag === "STRONG" || !!HEADING[tag];
-          let ni = i || tag === "I" || tag === "EM";
-          const styleAttr = child.getAttribute("style");
-          if (styleAttr) {
-            const mw = /font-weight\s*:\s*([a-z0-9]+)/i.exec(styleAttr);
-            if (mw) { const v = mw[1].toLowerCase(), n = parseInt(v, 10);
-              if (v === "bold" || v === "bolder") nb = true;
-              else if (v === "normal" || v === "lighter") nb = false;
-              else if (!isNaN(n)) nb = n >= 600; }
-            const ms = /font-style\s*:\s*([a-z]+)/i.exec(styleAttr);
-            if (ms) { const v = ms[1].toLowerCase();
-              if (v === "italic" || v === "oblique") ni = true;
-              else if (v === "normal") ni = false; }
-          }
-          if (BLOCK[tag]) {
-            flush();
-            const saved = curTag;
-            // figcaption → a styled image caption; address → the title's byline
-            // (that is how sources mark a masthead credit); everything else is a paragraph.
-            curTag = HEADING[tag] ? tag.toLowerCase()
-              : tag === "FIGCAPTION" ? "figcaption"
-              : tag === "ADDRESS" ? "byline"
-              : "p";
-            visit(child, nb, ni);
-            flush();
-            curTag = saved;
-          } else {
-            visit(child, nb, ni);                         // inline: keep accumulating
-          }
-        }
-      }
-    }
-
-    visit(root, false, false);
-    flush();
-    return blocks;
-  }
-
-  // Build the SAME token stream buildTextModel produces — word / sep / break,
-  // with word tokens carrying a `sent` index — but with two additions the plain
-  // path lacks: a `tag` on each break (so render knows heading vs paragraph) and
-  // `b` / `i` flags on word tokens. The word/sep tokenisation and sentence
-  // indexing are unchanged, so click / drag / phrase-join / context all behave
-  // exactly as before.
-  function buildTextModelFromHtml(html) {
-    textTokens = [];
-    textSentences = [];
-    const blocks = htmlToBlocks(html);
-    for (const blk of blocks) {
-      // An image block carries no words — emit a standalone img token (skipped by
-      // the word/mark logic, which only ever touches type === "word").
-      if (blk.tag === "img") { textTokens.push({ type: "img", src: blk.src, alt: blk.alt }); continue; }
-      if (blk.tag === "embed") { textTokens.push({ type: "embed", label: blk.label, video: blk.video }); continue; }
-      const text = blk.text;
-      if (!text.trim()) continue;
-      textTokens.push({ type: "break", tag: blk.tag });   // leading break carries this block's tag
-      const ranges = sentenceRanges(text);
-      const baseSent = textSentences.length;
-      for (const r of ranges) textSentences.push(text.slice(r[0], r[1]).trim());
-      const runs = blk.runs;
-      let off = 0, si = 0, ri = 0, racc = 0;               // forward pointers (off is non-decreasing)
-      for (const tok of tokenize(text)) {
-        if (tok.type === "word") {
-          while (si < ranges.length - 1 && off >= ranges[si][1]) si++;
-          while (ri < runs.length - 1 && off >= racc + runs[ri].len) { racc += runs[ri].len; ri++; }
-          const st = runs[ri] || { b: false, i: false };
-          textTokens.push({ type: "word", value: tok.value, marked: false, sent: baseSent + si, b: !!st.b, i: !!st.i });
-        } else {
-          textTokens.push({ type: "sep", value: tok.value });
-        }
-        off += tok.value.length;
-      }
-    }
-  }
-
-  function renderTextView() {
-    let html = "", para = "", curTag = "p";
-    const flush = () => {
-      if (!para) return;
-      if (curTag === "p") html += `<p class="rt-p">${para}</p>`;
-      else if (curTag === "figcaption") html += `<p class="rt-cap">${para}</p>`;
-      else if (curTag === "byline") html += `<p class="rt-byline">${para}</p>`;
-      else html += `<${curTag} class="rt-h">${para}</${curTag}>`;   // h1–h6 from the paste
-      para = "";
-    };
-    for (let i = 0; i < textTokens.length; i++) {
-      const t = textTokens[i];
-      if (t.type === "img") {
-        // src is validated to https in htmlToBlocks; both attrs are escaped so the
-        // built string can't break out of the tag (matches the .word escaping).
-        flush();
-        html += `<figure class="rt-fig"><img class="rt-img" loading="lazy" decoding="async" src="${escapeHtml(t.src)}" alt="${escapeHtml(t.alt)}"></figure>`;
-        continue;
-      }
-      if (t.type === "embed") {
-        // A non-renderable embed (CSP blocks third-party frames) → a labelled note
-        // in place of the missing video/widget, so its section isn't a bare heading.
-        flush();
-        const kind = t.video ? "▶ Video" : "Embedded media";
-        const lbl = t.label ? ` — ${escapeHtml(t.label)}` : "";
-        html += `<p class="rt-embed">${kind}${lbl}</p>`;
-        continue;
-      }
-      if (t.type === "break") { flush(); curTag = t.tag || "p"; continue; }
-      if (t.type === "word") {
-        const emph = (t.b ? " b" : "") + (t.i ? " i" : "");
-        para += `<span class="word${t.marked ? " marked" : ""}${emph}" data-i="${i}">${escapeHtml(t.value)}</span>`;
-      } else {
-        para += escapeHtml(t.value);
-      }
-    }
-    flush();
-    textEl.innerHTML = html;
-    textSpans = [];
-    for (const sp of textEl.querySelectorAll(".word")) textSpans[Number(sp.dataset.i)] = sp;
-  }
-
-  // The context window for a text selection: every sentence the marked words
-  // touch, plus SENT_WINDOW sentences before the first and after the last.
-  function textContextWindow() {
-    let lo = Infinity, hi = -Infinity;
-    for (const t of textTokens) {
-      if (t.type === "word" && t.marked && t.sent != null) {
-        if (t.sent < lo) lo = t.sent;
-        if (t.sent > hi) hi = t.sent;
-      }
-    }
-    if (!isFinite(lo)) return pastedText.slice(0, 4000);
-    const from = Math.max(0, lo - SENT_WINDOW);
-    const to = Math.min(textSentences.length - 1, hi + SENT_WINDOW);
-    return textSentences.slice(from, to + 1).join(" ");
-  }
-
-  // Flip one word's mark, touching only its rendered span — cheap during a drag
-  // over a long article (no full re-render).
-  function setTextMarked(i, val) {
-    const t = textTokens[i];
-    if (!t || t.type !== "word" || t.marked === val) return;
-    t.marked = val;
-    const sp = textSpans[i];
-    if (sp) sp.classList.toggle("marked", val);
-  }
-
-  // Repaint only the words whose mark changed since the last drag step (the
-  // union of the old and new ranges), so dragging stays smooth on long texts.
-  function applyTextDragRange(ds = textDrag) {
-    if (!ds) return;
-    const a = Math.min(ds.startIdx, ds.currentIdx), b = Math.max(ds.startIdx, ds.currentIdx);
-    const pa = ds.prevA == null ? a : ds.prevA;
-    const pb = ds.prevB == null ? b : ds.prevB;
-    for (let i = Math.min(a, pa); i <= Math.max(b, pb); i++) {
-      const t = textTokens[i];
-      if (!t || t.type !== "word") continue;
-      const inRange = i >= a && i <= b;
-      setTextMarked(i, ds.snapshot[i] !== inRange);   // XOR: toggle within range
-    }
-    ds.prevA = a; ds.prevB = b;
-  }
-
-  function clearTextMarks() {
-    for (let i = 0; i < textTokens.length; i++) {
-      if (textTokens[i].marked) setTextMarked(i, false);
-    }
-  }
-
-  // A fresh text selection → next (shared) panel slot, anchored to the text's
-  // own context window, then explained. `ctx` is captured BEFORE marks clear.
-  function startNewExplainText(items, ctx) {
-    const panel = nextPanelForSelection();
-    panel.threadText = ctx;
-    triggerExplain(panel, items);
-  }
-
-  // ---- Lora warm-up + reveal gating (kills the paste font-swap flash) --------
-  //
-  // The pasted reading view (.text-window) is set in Lora — a self-hosted woff2
-  // loaded with font-display:swap. Left alone, the first paste paints in the
-  // fallback serif (Georgia) and then reflows the instant Lora finishes
-  // downloading: the "small then bigger" blink. To make that swap NEVER show, we
-  // warm every Lora face at boot and keep the text-window hidden until Lora is
-  // actually ready, so the text paints once, already in Lora. document.fonts
-  // caches, so every paste after the first reveals on the next microtask with no
-  // wait. A safety timeout means a font-load failure reveals the text in the
-  // fallback rather than trapping it hidden forever.
-  const FONT_REVEAL_TIMEOUT = 1500;   // ms — only a failure fallback, not a latency knob
-  let loraReady = null;               // memoised: resolves when Lora is usable (or we gave up)
-  let textWindowRevealSeq = 0;        // ignore a stale reveal if a newer paste lands first
-
-  function warmLoraFonts() {
-    if (loraReady) return loraReady;
-    // The four faces a paste can render: regular, bold (.word.b), italic
-    // (.word.i) and bold-italic — same family string the CSS @font-face uses.
-    const faces = ['400 1em "Lora"', '700 1em "Lora"',
-                   'italic 400 1em "Lora"', 'italic 700 1em "Lora"'];
-    let ready;
-    try {
-      ready = (document.fonts && document.fonts.load)
-        ? Promise.all(faces.map((f) => document.fonts.load(f, "Mg")))
-        : Promise.resolve();
-    } catch (_) { ready = Promise.resolve(); }   // API quirk — don't block on it
-    // Never reject (a 404 / server error must not block reveal) and cap the wait
-    // so the first paste can't hang on a slow or failed font fetch.
-    loraReady = Promise.race([
-      ready.catch(() => {}),
-      new Promise((res) => setTimeout(res, FONT_REVEAL_TIMEOUT)),
-    ]);
-    return loraReady;
-  }
-
-  // Reveal the text-window only once Lora is ready (or the timeout fires), so the
-  // fallback→Lora swap is never on screen. After the first reveal the promise is
-  // already settled, so later pastes unhide on the next microtask — no visible
-  // wait, and no re-hide flicker (we only ever set hidden = false).
-  function revealTextWindow() {
-    const seq = ++textWindowRevealSeq;
-    warmLoraFonts().then(() => {
-      if (seq !== textWindowRevealSeq) return;   // a newer paste took over
-      if (videoShown()) return;   // video mode owns the slot (loadPastedText leaves it first)
-      textEl.hidden = false;
-      textEl.scrollTop = 0;
-    });
-  }
-
-  // Accepts either { html, plain } from the clipboard or a bare plain string.
-  // The rich path is tried first and falls back to plain if the HTML carried no
-  // usable text — so a paste from a plain source behaves exactly as before.
-  function loadPastedText(raw) {
-    let html = "", plain = "";
-    if (raw && typeof raw === "object") { html = raw.html || ""; plain = raw.plain || ""; }
-    else { plain = String(raw); }
-
-    let built = false;
-    if (html && html.trim()) {
-      if (html.length > MAX_HTML) html = html.slice(0, MAX_HTML);
-      buildTextModelFromHtml(html);
-      built = textTokens.length > 0;
-    }
-    if (built) {
-      // Keep a plain copy for textContextWindow's no-selection fallback.
-      const flat = (plain && plain.trim()) ? plain : textSentences.join(" ");
-      pastedText = flat.length > MAX_PASTE ? flat.slice(0, MAX_PASTE) : flat;
-    } else {
-      const text = String(plain).replace(/\r\n?/g, "\n");
-      pastedText = text.length > MAX_PASTE ? text.slice(0, MAX_PASTE) : text;
-      buildTextModel(pastedText);
-    }
-    if (!textTokens.length) return;        // nothing usable in the paste
-    // A text load means "show me this", so leave video mode first — before
-    // textActive flips, so the reading view is revealed by revealTextWindow's
-    // font-gated path below and not unhidden bare by applyVideoMode.
-    exitVideoMode();
-    renderTextView();
-    textActive = true;
-    revealTextWindow();   // unhide only once Lora is ready — no font-swap flash
-  }
-
-  function initTextMode() {
-    // Paste anywhere on the page loads the text — unless an editable field is
-    // focused (none today, but stay polite if one is ever added).
-    document.addEventListener("paste", (e) => {
-      const ae = document.activeElement;
-      if (ae && (ae.isContentEditable || ae.tagName === "INPUT" || ae.tagName === "TEXTAREA")) return;
-      const cd = e.clipboardData || window.clipboardData;
-      if (!cd) return;
-      const html = cd.getData("text/html") || "";
-      const plain = cd.getData("text/plain") || cd.getData("text") || "";
-      if (!html.trim() && !plain.trim()) return;
-      e.preventDefault();
-      loadPastedText({ html, plain });
-    });
-
-    // Click-a-word / drag-a-phrase — the same gesture as the caption, on the
-    // text's own token array. Plain click marks one word; a drag marks the range.
-    // On release: collect items, capture the context window, clear marks, explain.
-    // Begin a pick at `span`: clear prior highlight, snapshot, seed textDrag.
-    // Shared by mousedown and the touch hold.
-    const beginTextPick = (span) => {
-      // Drop the previous lookup's highlight so this gesture starts from a clean
-      // slate: the snapshot below must read all-false, and only the word(s) picked
-      // in THIS gesture should stay lit — one active highlight at a time, matching
-      // the single explanation panel (MAX_PANELS).
-      clearTextMarks();
-      const i = Number(span.dataset.i);
-      textDrag = { startIdx: i, currentIdx: i, moved: false, snapshot: textTokens.map((t) => !!t.marked) };
-    };
-    const extendTextPick = (span) => {
-      if (!textDrag) return;
-      const i = Number(span.dataset.i);
-      if (i === textDrag.currentIdx) return;
-      textDrag.currentIdx = i;
-      if (i !== textDrag.startIdx) textDrag.moved = true;
-      applyTextDragRange();
-    };
-    function finishTextGesture() {
-      if (!textDrag) return;
-      const ds = textDrag; textDrag = null;
-      if (ds.moved) applyTextDragRange(ds);
-      else setTextMarked(ds.startIdx, true);   // a plain click selects the word
-      const items = collectMarkedItems(textTokens);
-      const ctx = textContextWindow();          // context window for the model
-      // Leave the selection highlighted in the original text so the reader can see
-      // which word the explanation is about — it clears on the next mousedown.
-      if (items.length) startNewExplainText(items, ctx);
-    }
-    textEl.addEventListener("mousedown", (e) => {
-      if (mouseSuppressed()) return;   // ignore the synthetic click trailing a touch gesture
-      const span = e.target.closest && e.target.closest(".word");
-      if (!span || e.button !== 0) return;
-      e.preventDefault();
-      beginTextPick(span);
-    });
-    textEl.addEventListener("mousemove", (e) => {
-      if (!textDrag) return;
-      if (e.buttons === 0) { textDrag = null; return; }
-      const span = e.target.closest && e.target.closest(".word");
-      if (!span) return;
-      extendTextPick(span);
-    });
-    window.addEventListener("mouseup", finishTextGesture);
-    // Touch: hold a word in the pasted text, then drag across it to select a phrase.
-    enableTouchWordSelect(textEl, ".word", beginTextPick, extendTextPick, finishTextGesture);
-  }
-
   /* ---------- video mode (YouTube sources · desktop only) ----------
 
      A YouTube link is imported as AUDIO — a server-made CBR MP3 that the
@@ -3082,9 +2581,7 @@
      (/api/sources/yt-video) and a MUTED <video> plays it slaved to #ln-audio. The
      audio element stays the single clock, so no amount of picture buffering,
      stalling or keyframe-snapping can drag the caption out of sync — the worst a
-     bad video stream can do is look choppy. The stage takes the reading view's
-     slot in the band, so "on" shows the picture where the text was and "off"
-     gives the text back.
+     bad video stream can do is look choppy.
 
      Nothing here is allowed to accumulate over a session — the whole point of
      keeping the video tab-local:
@@ -3196,23 +2693,10 @@
     if (!on) {
       releaseVideo();
       videoWrap.hidden = true;
-      // Hand the slot back to the reading view — if there is any text in it. Set
-      // directly rather than via revealTextWindow(), which resets the scroll
-      // position (right for a fresh paste, wrong for coming back from the video).
-      textEl.hidden = !textActive;
       return;
     }
-    textEl.hidden = true;
     videoWrap.hidden = false;
     if (videoState === "idle") attachVideo();   // otherwise it's already loading/ready/failed
-  }
-
-  // A paste means "show me this" — so it leaves video mode and gives the reading
-  // view its slot back.
-  function exitVideoMode() {
-    if (!videoMode) return;
-    videoMode = false;
-    applyVideoMode();
   }
 
   // Declare the loaded source's YouTube identity: the opaque id for a YouTube
@@ -3344,8 +2828,6 @@
   setListen("idle");   // show the upload prompt; the caption stays empty
   startTicker();
   checkCredits();
-  initTextMode();
   applyVideoMode();  // no source yet → stage down, toggle hidden (one source of truth)
-  warmLoraFonts();   // start fetching Lora now so the first paste reveals flash-free
   ensureSrcMenu();   // pre-populate the source menu so it's ready on first open
 })();
