@@ -20,6 +20,8 @@
     "productName": "Audio Materials",
     "files": [
       "main.js",
+      "preload.js",
+      "titlebar.js",
       "app.html",
       "app-base.js",
       "app-listen.js",
