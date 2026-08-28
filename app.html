@@ -1,0 +1,1171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#181818">
+<title>ComArt</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23211f1c'/%3E%3Cg fill='%23e7e5e0'%3E%3Crect x='10' y='10' width='19' height='19' rx='4.5'/%3E%3Crect x='35' y='10' width='19' height='19' rx='4.5'/%3E%3Crect x='10' y='35' width='19' height='19' rx='4.5'/%3E%3C/g%3E%3Crect x='35' y='35' width='19' height='19' rx='4.5' fill='%23ff6719'/%3E%3C/svg%3E">
+<style>
+  /* IPA glyphs (ə, ˈ, ˌ, ē …) render most reliably in Open Sans — used for the
+     Merriam-Webster pronunciation badges in the Listen feature only. Served
+     from /fonts. */
+  @font-face {
+    font-family: "Open Sans";
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url("OpenSans-400-Latin.woff2") format("woff2");
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
+      U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193,
+      U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+  @font-face {
+    font-family: "Open Sans";
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url("OpenSans-400-Latin-Ext.woff2") format("woff2");
+    unicode-range: U+0100-024F, U+0259, U+1E00-1EFF, U+2020, U+20A0-20AB,
+      U+20AD-20CF, U+2113, U+2C60-2C7F, U+A720-A7FF;
+  }
+
+  /* Lora — the serif Substack reads in. One variable file spans the weights we
+     use (400 body → 700 titles); a matching italic carries *emphasis* and
+     blockquotes. Self-hosted from /fonts so it works under font-src 'self'. */
+  @font-face {
+    font-family: "Lora";
+    font-style: normal;
+    font-weight: 400 700;
+    font-display: swap;
+    src: url("Lora-Latin.woff2") format("woff2");
+  }
+  @font-face {
+    font-family: "Lora";
+    font-style: italic;
+    font-weight: 400 700;
+    font-display: swap;
+    src: url("Lora-Latin-Italic.woff2") format("woff2");
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    color-scheme: dark;
+
+    /* Substack-inspired dark theme. A warm near-black page; flat surfaces
+       separated by hairlines rather than heavy drop shadows; a calm off-white
+       reading colour; and Substack's signature orange as the single action
+       accent. Reading surfaces (the transcript, explanations, titles)
+       are set in a serif — Substack's defining move — while UI chrome
+       (buttons, labels, meta) stays in a clean neutral sans. */
+    --bg: #181818;
+    --surface: #202020;
+    --surface-2: #292826;
+    --text: #e7e5e0;
+    --text-2: #9b9892;
+    --accent: #ff6719;
+    --accent-hover: #ff8142;
+    --rec: #ff5a4d;
+    --hairline: rgba(255, 255, 255, 0.08);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-hover: 0 8px 26px rgba(0, 0, 0, 0.55);
+
+    /* Listen feature */
+    --border: rgba(255, 255, 255, 0.12);
+    --text-soft: #c5c2bb;
+    --text-dim: #78756f;
+    --mark: rgba(255, 203, 92, 0.26);
+    --mark-hover: rgba(255, 203, 92, 0.42);
+    --word-hover: rgba(255, 255, 255, 0.07);
+    /* A cool teal for pronunciation badges — a deliberate counterpoint to the
+       warm orange action accent, so the two reads never get confused. */
+    --pron: #8ec5d3;
+    --pron-border: rgba(142, 197, 211, 0.42);
+    --pron-bg: rgba(142, 197, 211, 0.1);
+    --pron-fill: rgba(142, 197, 211, 0.2);
+    /* A soft violet for AI-made pronunciations — when Merriam-Webster has no
+       entry, the LLM supplies a best-effort respelling. A separate hue (not
+       the teal MW reads as, nor the red/amber error reads) so the user can
+       tell at a glance this one was generated, not looked up. */
+    --pron-ai: #c3a6e8;
+    --pron-ai-border: rgba(195, 166, 232, 0.5);
+    --pron-ai-bg: rgba(195, 166, 232, 0.12);
+    --err: #ff5a4d;
+    --warn: #e8b34a;
+
+    --serif: "Lora", Georgia, "Iowan Old Style", "Times New Roman", serif;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+            "Helvetica Neue", Arial, sans-serif;
+  }
+
+  html, body { height: 100%; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    /* Fixed-height app shell: the page itself never scrolls;
+       each column and the audio bar manage their own overflow. Mobile reverts
+       to a normal scrolling document (see the media query below). */
+    height: 100dvh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+  }
+
+  /* ======================================================================
+     LISTEN — YOUR uploaded audio with a synced transcript + word-by-word
+     explanations. The main region (the "band") holds the explanation panel and,
+     until a file is loaded, the upload prompt; the rolling 3-sentence transcript
+     window and a full-width bar at the page bottom make up the audio player.
+     (Inner class names are kept verbatim to match the Listen JS below.)
+     ====================================================================== */
+
+  /* Explanation band — the page's main region, filling the whole area above the
+     player. Holds the single explanation panel (R1), anchored to the bottom
+     (nearest the caption) at a draggable height; the space above it is empty. */
+  .explain-band {
+    flex: 1 1 auto;                /* the main region: fills the area above the player */
+    min-height: 0;
+    overflow: visible;             /* don't clip the floating record button / its shadow */
+    display: flex;
+    flex-direction: column;        /* panels reordered via `order` (R1 bottom) */
+    justify-content: flex-end;     /* the panel sits at the bottom, R1 nearest caption */
+    position: relative;
+    /* Clearance for the record button, which is fixed at the top-right and so sits
+       outside the flow: without this the first line of a pasted article renders
+       under the mic glyph — and, at narrow widths, becomes unclickable. */
+    padding-top: 52px;
+    background: color-mix(in srgb, var(--bg) 55%, var(--surface));
+  }
+  .explain-band[hidden] { display: none; }
+
+  /* The single explanation panel (R1). Anchored to the bottom of the band
+     (nearest the caption) at a draggable height (--panel-h); the space above is
+     empty. It scrolls its own text rather than growing to fit content. */
+  .explain-panel {
+    flex: 0 0 var(--panel-h, 60vh);
+    min-height: 0;
+    position: relative;            /* anchor for the top-edge resize handle */
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid var(--border);
+  }
+
+  /* Resize handle on the panel's top edge — drag up/down to change its height.
+     Invisible at rest, a faint accent line on hover/drag. */
+  .panel-resize {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -5px;
+    height: 11px;
+    cursor: row-resize;
+    z-index: 6;
+    touch-action: none;
+  }
+  .panel-resize::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 2px;
+    transform: translateY(-50%);
+    background: var(--accent);
+    opacity: 0;
+    transition: opacity 0.13s ease;
+  }
+  .panel-resize:hover::after,
+  .panel-resize.dragging::after { opacity: 0.55; }
+
+  /* Centered loading spinner overlay (shown while a transcript loads). */
+  .band-loading {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2;
+  }
+  .band-loading[hidden] { display: none; }
+  /* While dragging, suppress text selection + pointer noise. */
+  body.resizing { cursor: row-resize; user-select: none; -webkit-user-select: none; }
+
+  /* Page-wide drag-over cue: a dashed accent ring inside the band. */
+  .explain-band.drag-over::after {
+    content: "";
+    position: absolute;
+    inset: 10px;
+    border: 2px dashed var(--accent);
+    border-radius: 16px;
+    pointer-events: none;
+    z-index: 5;
+  }
+
+  /* Pasted-text reading view — fills the main space ABOVE the explanation panel
+     (order:-1). Holds the article/essay the user pastes (⌘V); every word is a
+     markable .word span, so the same click-a-word / drag-a-phrase explanation
+     flow works here, just with the text's own context window. */
+  .text-window {
+    order: -1;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 22px max(18px, 4vw) 28px;
+    font-family: var(--serif);
+    font-size: 18px;
+    line-height: 1.75;
+    color: var(--text);
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;   /* no iOS long-press callout — the hold is ours */
+  }
+  .text-window[hidden] { display: none; }
+  .text-window .rt-p { margin: 0 auto 16px; max-width: 70ch; }
+  .text-window .rt-p:last-child { margin-bottom: 0; }
+  /* Headings carried over from the pasted HTML (h1–h6). Centred, and only a
+     hair larger than body — source headings run ~1.12–1.17× body, distinguished
+     mostly by centring + bold, NOT by big type. Still built from the same
+     markable .word spans, so clicking a heading word explains it too. */
+  .text-window .rt-h {
+    margin: 18px auto 12px; max-width: 70ch;
+    /* Normal weight on purpose: the <hN> UA default is bold, but whether a
+       heading actually reads as bold is decided per-word by .word.b (from the
+       source's real font-weight), so a non-bold title stays non-bold. */
+    text-align: center; font-weight: 400; line-height: 1.35; color: var(--text);
+  }
+  .text-window .rt-h:first-child { margin-top: 0; }
+  .text-window h1.rt-h { font-size: 1.2em; }
+  .text-window h2.rt-h { font-size: 1.12em; }
+  .text-window h3.rt-h { font-size: 1.12em; }
+  .text-window h4.rt-h, .text-window h5.rt-h, .text-window h6.rt-h { font-size: 1.05em; }
+  /* Inline emphasis carried over from the paste, applied straight onto the
+     .word span so the word stays individually clickable/markable. */
+  .text-window .word.b { font-weight: 700; }
+  .text-window .word.i { font-style: italic; }
+
+  /* Byline + date, sitting under the title. Set in the neutral UI sans (not the
+     body serif) and dimmed, the way a masthead credit reads; centred to sit
+     under the centred title. Comes from an <address> block in the pasted HTML
+     (htmlToBlocks maps ADDRESS -> "byline"), so its words are never bold/italic. */
+  .text-window .rt-byline {
+    max-width: 70ch; margin: -2px auto 22px;
+    font-family: var(--sans); font-size: 0.8em; letter-spacing: 0.01em;
+    color: var(--text-2); text-align: center;
+  }
+  .text-window .rt-byline .word { font-weight: 400; font-style: normal; }
+
+  /* A figure photo from the pasted article — the reading view's only non-text block.
+     The SERVER never fetches it; the browser would load it straight from its origin.
+     The page CSP (see server.go) allows no remote image host, so today only a data:
+     URI actually paints and a remote photo leaves the placeholder box below — add a
+     host to img-src to bring one back. Only an <img> with real alt text gets this far,
+     so trackers / promo thumbnails never render. Constrained to the reading column
+     and centred, like the paragraphs. */
+  .text-window .rt-fig { margin: 22px auto 0; max-width: 70ch; }
+  .text-window .rt-fig:first-child { margin-top: 0; }
+  .text-window .rt-img {
+    display: block; width: 100%; height: auto;
+    border-radius: 8px; background: var(--surface-2);
+  }
+  /* Caption (a <figcaption>'s text, including its trailing photo credit). Smaller
+     and dimmed so it reads as secondary to the body, tucked right under its image.
+     Its words are still individual .word spans, so a caption word explains like
+     any other. */
+  .text-window .rt-cap {
+    max-width: 70ch; margin: 8px auto 18px;
+    font-size: 0.76em; line-height: 1.5; color: var(--text-dim);
+  }
+  .text-window .rt-cap .word { padding: 1px 1px; margin: 0 -1px; }
+
+  /* Placeholder for an embed that can't render here (a YouTube video, a data
+     widget — the page CSP blocks third-party frames). A quiet dashed note in the
+     reading column carrying the embed's own title, so a section that was built
+     around a video still reads as one instead of a heading over nothing. */
+  .text-window .rt-embed {
+    max-width: 70ch; margin: 14px auto 18px;
+    padding: 13px 16px;
+    border: 1px dashed var(--border); border-radius: 8px;
+    font-family: var(--sans); font-size: 0.84em; color: var(--text-2);
+    text-align: center;
+  }
+
+  /* ---------- video stage (YouTube sources · desktop only) ----------
+     Video mode shows the picture where the reading view goes: the stage takes the
+     SAME slot in the band (order:-1, flex:1 1 auto), so "on" gives it the whole
+     main region minus the explanation panel, and "off" hands the slot straight
+     back to the text. Exactly one of the two is ever visible (applyVideoMode).
+     Letterboxed on pure black — not the warm page background — since that is what
+     reads as "picture" behind a frame that can't fill the box; object-fit keeps the
+     frame whole at any panel height. */
+  .video-window {
+    order: -1;
+    flex: 1 1 auto;
+    min-height: 0;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    background: #000;
+  }
+  .video-window[hidden] { display: none; }
+  /* Deliberately NO `controls`: the page's player bar is the only transport, and
+     the picture is muted and slaved to it (native controls would let the two
+     drift apart). Clicking the picture toggles play/pause — the one gesture a
+     video invites — hence the pointer cursor. */
+  .video-window video {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: #000;
+    cursor: pointer;
+  }
+  /* Belt and braces on the focus ring (see the element's comment): the picture is
+     a display surface, not a control — it is not in the tab order and every real
+     control keeps its ring, so there is no keyboard affordance to lose here. */
+  .video-window video:focus,
+  .video-window video:focus-visible { outline: none; }
+  /* In video mode the picture takes the WHOLE top of the page, so the band drops
+     its record-button clearance and the frame starts at y=0. Nothing is lost: the
+     button is fixed, so it keeps floating over the picture (drop-shadow above). */
+  body.video-on .explain-band { padding-top: 0; }
+
+  /* "Preparing…" / error overlay. Opaque, so a stale frame can never sit behind a
+     message about a picture that isn't there. */
+  .video-status {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: var(--bg);
+  }
+  .video-status[hidden] { display: none; }
+
+  /* Caption — the line being spoken, sitting at the top of the player like a
+     video's subtitles. Lives inside the .player block; centred, grows with the
+     line, and only scrolls if a sentence is unusually long. */
+  .now-window {
+    /* min-height = one caption line, so the box is the SAME height whether it
+       holds the loading spinner, a freshly-revealed first word, or a full line.
+       That kills the height jump when the transcript finishes loading. */
+    min-height: 40px;
+    max-height: 26vh;
+    overflow-y: auto;
+    /* Negative margin cancels most of the player's side gutter so a long line
+       runs nearly edge-to-edge. */
+    margin: 0 -14px;
+    padding: 2px 0 9px;
+    text-align: center;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;   /* no iOS long-press callout — the hold is ours */
+  }
+  .now-window:empty { display: none; }
+  .chunk { font-family: var(--serif); line-height: 1.55; letter-spacing: 0; transition: color 0.3s ease; }
+  .chunk.current { font-size: 17px; font-weight: 600; color: var(--text); }
+  /* The preceding line, shown above the current one as a dimmed, already-spoken
+     subtitle. Dimmer than the current line but fully interactive — its words are
+     markable just like the current line's. Dim via COLOR (not opacity) so a
+     marked word can still light up to full brightness — a parent opacity would
+     cap its children and mute the mark. */
+  .chunk.context { font-size: 15px; font-weight: 400; color: var(--text-dim); margin: 0 0 2px; }
+
+  .word {
+    cursor: pointer;
+    padding: 1px 2px;
+    margin: 0 -2px;
+    border-radius: 4px;
+    transition: background 0.12s ease;
+  }
+  .word:hover { background: var(--word-hover); }
+  .word.marked, .word.marked:hover { background: var(--mark); color: var(--text); }
+  .word.marked:hover { background: var(--mark-hover); }
+  /* Words in the active A-B loop — set by right-clicking a word or right-dragging a
+     phrase; playback repeats over them until cleared (right-click again / Esc). A
+     soft accent tint plus the accent underline marks the looped span. (color-mix
+     may be unsupported on old engines — the underline alone still reads as the mark.) */
+  .word.looping {
+    box-shadow: inset 0 -2px 0 0 var(--accent);
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    border-radius: 4px 4px 0 0;
+  }
+
+  /* Word-by-word reveal (karaoke). When the transcript carries per-word
+     timings, the caption gets the .reveal class: a word is not rendered at all
+     until it has been spoken (so the line grows as the speaker talks and there
+     are no blank gaps), then it appears. The word currently being spoken glows
+     in the accent colour. */
+  /* Reveal mode is LEFT-aligned: already-spoken words stay anchored on the left
+     while new ones extend to the right, so the eye never has to chase a moving
+     line (centred reveal re-centres on every word). The side padding restores
+     the player's gutter that the negative margin cancels. */
+  .now-window.reveal { text-align: left; padding-left: 14px; padding-right: 14px; }
+  .now-window.reveal .word { display: none; }
+  .now-window.reveal .word.spoken { display: inline; }
+  /* Keep looped words visible even if the reveal would hide them (e.g. after the
+     loop seeks back before them), so the loop marker never disappears while its
+     line is on screen. */
+  .now-window.reveal .word.looping { display: inline; }
+  /* The word being spoken is NOT colour-highlighted — words just appear in the
+     normal text colour as they're read (the .speaking class is still applied,
+     left unstyled in case we want to bring a highlight back later). */
+
+  .window-status {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    /* NO vertical padding: the spinner (22px) + the caption's own padding stays
+       under .now-window's 40px min-height, so the loading state and a one-line
+       caption are the exact same height — the bar no longer drops on load. */
+    padding: 0 16px;
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 14px;
+    font-weight: 500;
+  }
+  /* An error status (a failed transcript) reads in the warning colour, not the
+     calm dim grey of a neutral/loading status. */
+  .window-status.error { color: var(--err); }
+  .spinner {
+    width: 22px; height: 22px;
+    border: 2.5px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .explain-content {
+    flex: 1 1 auto;
+    min-height: 0;
+    width: 100%;
+    overflow-y: auto;
+    /* Keep a scroll gesture that started in the panel inside the panel: don't let
+       it chain to the page (the article behind it) when it hits the top/bottom. */
+    overscroll-behavior: contain;
+    padding: 20px 16px;
+    font-family: var(--serif);
+    font-size: 15.5px;
+    line-height: 1.65;
+    color: var(--text);
+  }
+  .now-window::-webkit-scrollbar,
+  .explain-content::-webkit-scrollbar { width: 10px; }
+  .now-window::-webkit-scrollbar-thumb,
+  .explain-content::-webkit-scrollbar-thumb {
+    background: var(--border);
+    background-clip: padding-box;
+    border: 3px solid transparent;
+    border-radius: 999px;
+  }
+  .explain-content .round p { margin: 0 0 10px; }
+  .explain-content .round p:last-child { margin-bottom: 0; }
+  .explain-content strong { font-weight: 600; color: var(--text); }
+  .explain-content em { color: var(--text-soft); font-style: italic; }
+  .explain-content blockquote {
+    margin: 4px 0 10px;
+    padding: 2px 0 2px 14px;
+    border-left: 2px solid var(--border);
+    color: var(--text-soft);
+    font-size: 0.95em;
+  }
+  .explain-content blockquote strong { color: var(--text); }
+  .explain-content .err { color: var(--err); font-weight: 500; }
+
+  .response-word { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+  .round-block.divided {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+  }
+
+  .pron-only {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px 14px;
+    margin-bottom: 14px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .pron-only-row { display: inline-flex; align-items: center; gap: 6px; }
+  .pron-only-row strong { font-weight: 600; color: var(--text); }
+
+  /* Likelihood chip — how much of the probability mass one reading carries,
+     shown only when the passage genuinely leaves the sense open and the answer
+     therefore gives more than one. Deliberately NEUTRAL grey, not a new hue:
+     teal already reads "from the dictionary", violet "AI-made" and orange
+     "action", so a fourth colour here would look like a fourth category of
+     thing rather than what it is — metadata about the sense beside it. The
+     leading reading takes .lead and sits brighter, so the eye lands on the most
+     likely meaning first and the alternates recede. */
+  .sense-odds {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid var(--border);
+    border-radius: 100px;
+    padding: 0 7px;
+    margin: 0 5px 0 6px;
+    font-family: var(--sans);
+    font-size: 0.7em;
+    font-style: normal;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.9;
+    letter-spacing: 0.02em;
+    color: var(--text-dim);
+    vertical-align: baseline;
+    cursor: help;
+    white-space: nowrap;
+  }
+  .sense-odds.lead {
+    color: var(--text-soft);
+    border-color: var(--text-dim);
+  }
+
+  .pron-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: transparent;
+    color: var(--pron);
+    border: 1px solid var(--pron-border);
+    border-radius: 100px;
+    padding: 0 8px 0 10px;
+    font: inherit;
+    font-size: 0.9em;
+    line-height: 1.7;
+    cursor: pointer;
+    vertical-align: baseline;
+    margin: 0 2px;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+  .pron-badge:hover { background: var(--pron-bg); }
+  .pron-badge:focus-visible { outline: 2px solid var(--pron); outline-offset: 2px; }
+  .pron-badge.is-playing { background: var(--pron-bg); }
+  .pron-badge.loading { opacity: 0.55; cursor: progress; }
+  .pron-badge.failed { border-style: dashed; cursor: help; }
+  /* MW refused the request (the Cloudflare 403, a 5xx, or a network blip):
+     a loud red error state — never the bare word. */
+  .pron-badge.failed.err-mw { color: var(--err); border-color: rgba(255, 90, 77, 0.55); }
+  .pron-badge.failed.err-mw:hover { background: rgba(255, 90, 77, 0.1); }
+  /* MW answered but has no pronunciation for this word: a softer amber. */
+  .pron-badge.failed.err-none { color: var(--warn); border-color: rgba(232, 179, 74, 0.55); }
+  .pron-badge.failed.err-none:hover { background: rgba(232, 179, 74, 0.1); }
+  .pron-badge .warn { width: 12px; height: 12px; fill: currentColor; }
+  .pron-badge .err-label { font-style: normal; font-size: 0.9em; }
+  /* AI-made pronunciation: Merriam-Webster had no entry, so the badge shows the
+     LLM's best-effort respelling. Marked distinctly — violet, dashed, a leading
+     "≈" and a trailing "AI" tag — so it never reads as a real dictionary
+     pronunciation. Not playable (there is no recording), hence cursor: help. */
+  .pron-badge.ai-made {
+    color: var(--pron-ai);
+    border-color: var(--pron-ai-border);
+    border-style: dashed;
+    cursor: help;
+  }
+  .pron-badge.ai-made:hover { background: var(--pron-ai-bg); }
+  .pron-badge.ai-made .approx { font-style: normal; opacity: 0.8; margin-right: -1px; }
+  .pron-badge.ai-made .ai-tag {
+    font-style: normal;
+    font-size: 0.62em;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    padding: 1px 4px;
+    margin-left: 2px;
+    border-radius: 4px;
+    background: var(--pron-ai-bg);
+    color: var(--pron-ai);
+  }
+  .pron-badge .ipa { font-style: normal; font-family: "Open Sans", inherit; }
+  .pron-badge .speaker { width: 12px; height: 12px; fill: currentColor; margin-left: 1px; }
+  .pron-badge .badge-pos { font-style: italic; font-size: 0.85em; color: var(--text-soft); margin-right: 1px; }
+  .pron-badge .dot-loader { display: inline-block; width: 16px; text-align: center; letter-spacing: 1px; }
+  .pron-variants { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+  .pron-badge.is-picked {
+    border-color: var(--pron);
+    background: var(--pron-fill);
+    box-shadow: 0 0 0 1px var(--pron) inset;
+  }
+  .pron-badge.is-picked:hover { background: var(--pron-fill); }
+  .pron-badge.is-picked .badge-pos { color: var(--pron); font-style: normal; font-weight: 700; }
+  .pron-badge.is-picked .ipa { font-weight: 600; }
+  .pron-variants:has(.is-picked) .pron-badge:not(.is-picked) { opacity: 0.45; }
+  .pron-variants:has(.is-picked) .pron-badge:not(.is-picked):hover { opacity: 1; }
+
+  .thinking { display: inline-flex; align-items: center; gap: 6px; padding: 8px 2px; }
+  .thinking span {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--text-dim);
+    animation: thinking-pulse 1.4s ease infinite;
+  }
+  .thinking span:nth-child(2) { animation-delay: 0.18s; }
+  .thinking span:nth-child(3) { animation-delay: 0.36s; }
+  @keyframes thinking-pulse {
+    0%, 80%, 100% { opacity: 0.3; transform: translateY(0); }
+    40% { opacity: 0.95; transform: translateY(-3px); }
+  }
+
+  /* ---------- bottom player block (full width) ---------- */
+  /* Holds the synced caption (.now-window), an optional low-credit warning, and
+     the controls row (open-file · play · seek). It is the bottom flex child of
+     the body shell. */
+  .player {
+    position: relative;
+    flex: 0 0 auto;
+    padding: 7px 16px 8px;
+    background: color-mix(in srgb, var(--bg) 72%, transparent);
+    backdrop-filter: saturate(180%) blur(20px);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    border-top: 1px solid var(--border);
+  }
+  .player[hidden] { display: none; }
+
+  /* Holds only the low-credit warning (when present), on its own line above the
+     controls. Collapses to zero height when the warning is hidden — the file's
+     name lives in the browser tab title. */
+  .ab-titlebar { display: flex; align-items: baseline; gap: 12px; padding: 0 2px; }
+  .ab-warn { font-size: 11.5px; font-weight: 500; color: var(--rec); white-space: nowrap; margin-bottom: 5px; }
+  .ab-warn[hidden] { display: none; }
+
+  /* touch-action: manipulation across the bar (and the seek track below) so a fast
+     double-tap anywhere in the transport area — not just on the buttons — never
+     triggers mobile double-tap-to-zoom. */
+  .audiobar { position: relative; display: flex; align-items: center; gap: 13px; touch-action: manipulation; }
+  /* No circle, no surface: the button IS just its icon, matching the floating
+     record / import buttons. The 34px box stays as an invisible touch target. */
+  .ab-menu, .ab-play, .ab-skip, .ab-collapse, .ab-video {
+    flex: none;
+    width: 34px; height: 34px;
+    padding: 0;
+    border: 0;
+    background: none;
+    cursor: pointer;
+    /* Tapping the jump buttons fast must not trigger the browser's double-tap
+       zoom (mobile). Same touch hygiene the record button uses. */
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    -webkit-user-select: none;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.12s ease, background 0.15s ease, color 0.15s ease;
+  }
+  /* Keyboard focus ring — there's no border/surface now, so the bare icon needs
+     an outline to show focus. Matches the .pron-badge / record-button pattern. */
+  .ab-menu:focus-visible, .ab-play:focus-visible, .ab-skip:focus-visible,
+  .ab-collapse:focus-visible, .ab-video:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  /* …except when focus was PARKED on play rather than navigated to it. Opening a
+     file moves focus here (so Space is useful), and a mouse click leaves it here.
+     Focus then sits on the button while the player is driven from the keyboard —
+     and the first keypress flips the browser into "keyboard mode", raising an
+     orange ring around a button nobody ever tabbed to. Those two paths set
+     .no-ring and blur clears it, so a real Tab onto play still shows the ring. */
+  .ab-play.no-ring:focus-visible { outline: none; }
+  .ab-menu { color: var(--text-soft); }
+  .ab-menu:hover { color: var(--text); }
+  .ab-menu svg { width: 20px; height: 20px; display: block; }
+  .ab-play { color: var(--accent); }
+  .ab-play:active, .ab-menu:active { transform: scale(0.94); }
+  .ab-play:disabled { opacity: 0.4; cursor: default; }
+  .ab-play svg { width: 20px; height: 20px; display: block; }
+  /* Default state shows play, hides pause. The selector must out-specify
+     `.ab-play svg { display: block }` above, hence `.ab-play .ab-ico-*`. */
+  .ab-play .ab-ico-pause { display: none; }
+  .audiobar.playing .ab-play .ab-ico-play { display: none; }
+  .audiobar.playing .ab-play .ab-ico-pause { display: block; }
+  /* ← / → jump buttons. Hidden on desktop, where the arrow keys already do this;
+     revealed on mobile by the media query (which also wraps the bar so the seek
+     track gets its own full-width row). */
+  .ab-skip { display: none; color: var(--text-soft); }
+  .ab-skip:hover { color: var(--text); }
+  .ab-skip:active { transform: scale(0.94); }
+  .ab-skip:disabled { opacity: 0.4; cursor: default; }
+  .ab-skip svg { width: 20px; height: 20px; display: block; }
+  /* Collapse the player (mobile only). A chevron-down that sits at the far right
+     of the controls row and hides the whole player; the floating broadcast
+     button (.ln-fab) then brings it back. Hidden on desktop (revealed by the
+     mobile media query, which also pushes it to the row's right edge). */
+  .ab-collapse { display: none; color: var(--text-soft); }
+  .ab-collapse:hover { color: var(--text); }
+  .ab-collapse:active { transform: scale(0.94); }
+  .ab-collapse svg { width: 20px; height: 20px; display: block; }
+
+  /* Video mode toggle — the last control in the bar, right of the time, where a
+     video player puts its fullscreen button. Hidden until a YouTube source is
+     loaded (setYouTubeSource), and hidden altogether on mobile. Lit in the accent
+     colour while the picture is showing, so the bar says which mode you're in. */
+  .ab-video { display: none; color: var(--text-soft); }
+  .ab-video:hover { color: var(--text); }
+  .ab-video:active { transform: scale(0.94); }
+  .ab-video svg { width: 20px; height: 20px; display: block; }
+  .ab-video[aria-pressed="true"] { color: var(--accent); }
+  /* Desktop only, and only for a YouTube source: the base rule keeps it hidden and
+     this reveals it once the JS drops the [hidden] attribute. The mobile media
+     query never reveals it, so a phone can't turn video mode on at all. */
+  @media (min-width: 761px) {
+    .ab-video:not([hidden]) { display: flex; }
+  }
+
+  /* Floating "show player" button (mobile only). When the player is collapsed,
+     this broadcast glyph floats at the bottom-right corner — same bare-glyph
+     style as the record button (.ex-btn): no surface, just the icon. Hidden by
+     default; the mobile media query reveals it only while collapsed. */
+  .ln-fab {
+    position: fixed;
+    bottom: calc(16px + env(safe-area-inset-bottom));
+    right: 14px;
+    z-index: 55;                 /* above the band/panel; below the record button (60) */
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 8px;
+    border: 0;
+    background: none;
+    color: var(--text-soft);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    -webkit-user-select: none;
+    user-select: none;
+    transition: transform .16s ease, color .16s ease;
+  }
+  .ln-fab:active { transform: scale(0.9); }
+  .ln-fab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .ln-fab svg { width: 24px; height: 24px; display: block; }
+  @media (hover: hover) { .ln-fab:hover { color: var(--text); } }
+  /* Seek track + time as one flex unit. min-width:0 lets the track shrink inside
+     it; on desktop this lays out identically to the old flat row. */
+  .ab-progress { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 13px; touch-action: manipulation; }
+  .ab-track {
+    flex: 1 1 auto;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--hairline);
+    cursor: pointer;
+    overflow: hidden;
+    touch-action: manipulation;   /* click-to-seek only; no double-tap zoom */
+  }
+  .ab-fill { height: 100%; width: 0; background: var(--accent); }
+  .ab-time {
+    flex: none;
+    font-size: 11.5px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-2);
+    min-width: 84px;
+    text-align: right;
+  }
+
+  /* ---------- source picker ----------
+     The open button no longer opens the file dialog directly: it raises a small
+     popover offering the local file picker plus a YouTube link import, whose
+     paste-a-link form opens in a centered sheet. */
+  .src-menu {
+    position: absolute;
+    left: 0;
+    /* Sit just above the whole bar. Anchoring to 100% (the bar's top edge) rather
+       than a fixed offset keeps the gap correct when the bar wraps to two rows on
+       mobile — a fixed bottom would land partway up the transport buttons there. */
+    bottom: calc(100% + 8px);
+    z-index: 90;
+    min-width: 232px;
+    padding: 6px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: var(--shadow-hover);
+  }
+  .src-menu[hidden] { display: none; }
+  .src-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    width: 100%;
+    padding: 9px 10px;
+    background: none;
+    border: 0;
+    border-radius: 8px;
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .src-menu-item:hover, .src-menu-item:focus-visible {
+    background: var(--word-hover);
+    outline: none;
+  }
+  .src-menu-item svg { width: 18px; height: 18px; flex: none; color: var(--text-soft); }
+  .src-menu-item span { display: flex; flex-direction: column; line-height: 1.3; min-width: 0; }
+  .src-menu-item small { color: var(--text-dim); font-size: 11.5px; }
+  /* YouTube "paste a link" form, shown inside the source sheet. */
+  .yt-form { display: flex; flex-direction: column; gap: 12px; padding: 4px 2px; }
+  .yt-input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 11px 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 15px;
+  }
+  .yt-input:focus-visible { outline: none; border-color: var(--accent); }
+  .yt-input:disabled { opacity: 0.55; }
+  .yt-load {
+    align-self: flex-start;
+    padding: 9px 18px;
+    background: var(--accent);
+    border: 0;
+    border-radius: 9px;
+    color: #1a1003;
+    font-family: var(--sans);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .yt-load:disabled { opacity: 0.55; cursor: default; }
+  .yt-status { min-height: 18px; }
+  .yt-status .window-status { padding: 0; }
+
+  /* Source sheet — a centered modal raised by the source picker (today: the
+     YouTube link form). */
+  .src-sheet {
+    position: fixed;
+    inset: 0;
+    z-index: 110;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .src-sheet[hidden] { display: none; }
+  .src-sheet-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.5); }
+  .src-sheet-card {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 540px;
+    max-height: 82vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  }
+  .src-sheet-head {
+    flex: none;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 16px 18px 12px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .src-sheet-titles { flex: 1 1 auto; min-width: 0; }
+  .src-sheet-title { font-family: var(--serif); font-size: 19px; font-weight: 700; color: var(--text); }
+  .src-sheet-close {
+    flex: none;
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--text-soft);
+    cursor: pointer;
+  }
+  .src-sheet-close:hover { background: var(--word-hover); color: var(--text); }
+  .src-sheet-close svg { width: 15px; height: 15px; display: block; }
+  .src-sheet-body { overflow-y: auto; padding: 6px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .spinner, .thinking span { animation: none; }
+  }
+
+  /* Stacked single-column layout on narrow screens. */
+  @media (max-width: 760px) {
+    /* Mobile reverts to a normal scrolling document; the player floats fixed at
+       the bottom and the band fills the screen above it. */
+    body { height: auto; min-height: 100dvh; overflow: visible; display: block; }
+
+    /* The band is the page's main content: fill the screen above the fixed
+       player and clear it with a matching bottom margin. Panels flow and the
+       page itself scrolls (no internal band scroll on mobile). */
+    .explain-band {
+      /* Reserve the player's REAL height (set from JS as --player-h, which
+         already includes the safe-area padding) so the fixed player never floats
+         up over the band — mirroring desktop, where the player is in normal flow
+         and simply pushes the band up. The fallback covers the first paint,
+         before the script measures the player. */
+      min-height: calc(100dvh - var(--player-h, 130px));
+      overflow: visible;
+      margin-bottom: var(--player-h, 130px);
+    }
+    /* The panel keeps the SAME draggable height as desktop (var(--panel-h)) —
+       anchored at the bottom near the player with empty space above, NOT filling
+       the whole band. (Dropping the desktop `flex: 0 0 var(--panel-h)` is why we
+       used to fill; we now inherit it.) Resize via the handle below. */
+    /* FLOAT the panel, like desktop. On desktop the page never scrolls and the
+       panel is a fixed-height box pinned to the bottom while the text scrolls in
+       its own box above. On mobile the whole page scrolls, so without help the
+       panel would scroll away with the text and a long article reading above an
+       explanation would hide it. position:sticky pins the panel just above the
+       fixed player (bottom = its reserved height) so it stays on screen while the
+       original text scrolls underneath — and, because it stays in normal flow, it
+       keeps reserving its own height at the end of the band (so the last lines of
+       text always clear it) and simply isn't there when no explanation exists yet.
+       An opaque background (matching the band) is required since text scrolls
+       beneath it; z-index sits above the text but below the fixed player (20) and
+       the record button (60). The top-edge resize handle rides along, so the panel
+       is still draggable while floating. */
+    .explain-panel {
+      position: sticky;
+      bottom: var(--player-h, 130px);
+      z-index: 10;
+      background: color-mix(in srgb, var(--bg) 55%, var(--surface));
+    }
+    /* Show the resize handle on touch: no hover to reveal it, so give it a
+       persistent centered grabber and a taller, easier-to-grab hit area. */
+    .panel-resize { top: -10px; height: 22px; }
+    .panel-resize::after {
+      opacity: 0.5;
+      left: 50%; right: auto;
+      width: 40px; height: 4px;
+      border-radius: 2px;
+      transform: translate(-50%, -50%);
+    }
+    /* The reading view flows at its natural height and the page itself scrolls
+       (no internal scroll box), matching the rest of the mobile band.
+       Bottom clearance = the normal reading gap (28px, matching the base padding)
+       PLUS the player's reserved height: the player is fixed and the explanation
+       panel is sticky above it (both cover the bottom of the viewport), and a
+       trailing MARGIN isn't counted as scrollable overflow — so without scrollable
+       padding here the article's last lines could never be scrolled out from behind
+       them. When no audio is loaded the player is hidden and --player-h is 0, so
+       this collapses back to the plain 28px gap. */
+    .text-window {
+      flex: 0 0 auto; overflow: visible;
+      padding-bottom: calc(28px + var(--player-h, 130px));
+    }
+    /* Video mode is desktop-only (the toggle isn't even reachable here) — but if a
+       desktop window is dragged narrow while it's on, the stage goes away instantly
+       rather than squeezing the panel + player off the screen. The JS also releases
+       the video on that same breakpoint crossing, so nothing keeps decoding behind
+       a display:none. */
+    .video-window { display: none; }
+    .player {
+      position: fixed;
+      left: 0; right: 0; bottom: 0;
+      z-index: 20;
+      padding: 8px 16px calc(8px + env(safe-area-inset-bottom));
+    }
+
+    /* Touch devices have no arrow keys, so reveal the ← / → jump buttons and let
+       the bar wrap: transport controls (add · back · play · forward) on the top
+       row, the seek track + time on their own full-width row below — the standard
+       mobile player shape, and it keeps the seek bar wide enough to scrub. */
+    .ab-skip { display: flex; }
+    /* Spread all five controls evenly across the row: space-between puts
+       add-audio at the left endpoint and hide at the right endpoint, with
+       back · play · forward evenly distributed between them. The seek row below
+       is flex-basis:100% so it sits alone on its own line, unaffected. */
+    .audiobar { flex-wrap: wrap; row-gap: 12px; justify-content: space-between; }
+    .ab-progress { flex-basis: 100%; }
+
+    /* The three transport buttons (back · play/pause · forward) share one size,
+       bigger than the two side buttons (add · hide, which stay 34px / 20px). Bare
+       glyphs, so the icon size IS the visible size — and the play glyph now fills
+       its box like the jump icons, so equal px reads as equal visual size. Even
+       spacing across the row is handled by .audiobar's space-between above. */
+    #ln-back, #ln-play, #ln-fwd { width: 44px; height: 44px; }
+    #ln-back svg, #ln-play svg, #ln-fwd svg { width: 30px; height: 30px; }
+    /* Un-dimmed (NOT bold): each button keeps its own colour, just at full
+       strength — back/forward go from the dimmed --text-soft to --text; play
+       keeps its accent orange. So the trio reads brighter than the two still-dim
+       side buttons (add · hide). */
+    #ln-back, #ln-fwd { color: var(--text); }
+
+    /* The record button is pinned to the viewport's top-right (see the base .ex
+       rule); on mobile, nudge it clear of the status-bar / notch safe area. */
+    .ex { top: calc(16px + env(safe-area-inset-top)); right: 14px; }
+
+    /* ---- Collapsible player (mobile only) ----
+       The whole player starts collapsed (body.player-collapsed in the markup):
+       hide it and float the broadcast button (.ln-fab) bottom-right to bring it
+       back. Tapping the chevron (.ab-collapse) inside the controls re-adds the
+       class. On desktop none of this applies — the class is a no-op there.
+       (No margin needed — .audiobar's space-between lands this button at the
+       row's right endpoint.) */
+    .ab-collapse { display: flex; }
+    body.player-collapsed .player { display: none; }
+    body.player-collapsed .ln-fab { display: flex; }
+  }
+</style>
+</head>
+<body class="player-collapsed">
+  <!-- Explanation band — the page's main region. Fills the whole area above the
+       player and holds the single explanation panel (R1, injected at runtime,
+       see makePanel), anchored to the bottom at a draggable height. -->
+  <div class="explain-band" id="ln-explain-band">
+    <!-- Loading spinner shown while an uploaded file's transcript is being
+         generated — no text, just the animation. -->
+    <div class="band-loading" id="ln-band-loading" hidden aria-label="Loading"><div class="spinner"></div></div>
+
+    <!-- Video stage — YouTube sources, desktop only. Shares the reading view's
+         slot: video mode shows this and hides .text-window, off does the reverse.
+         The <video> is MUTED and slaved to #ln-audio (the clock the transcript is
+         aligned to), holds no blob — its src is a plain URL the browser
+         Range-streams — and has that src removed the moment video mode goes off,
+         so nothing accumulates across a session. -->
+    <div class="video-window" id="ln-video" hidden aria-label="Video">
+      <!-- No tabindex on purpose: a <video> without `controls` isn't focusable,
+           and tabindex="-1" would make it CLICK-focusable — which is what put
+           Chrome's focus ring (white on a dark theme) around the picture the
+           moment an arrow key switched it to keyboard modality. -->
+      <video id="ln-video-el" muted playsinline webkit-playsinline preload="auto"
+             disablepictureinpicture></video>
+      <div class="video-status" id="ln-video-status" hidden></div>
+    </div>
+
+    <!-- Pasted-text reading view (paste with ⌘V / Ctrl+V to fill it). Hidden
+         until text is pasted; renders the text as markable .word spans sitting
+         above the explanation panel, sharing the same panel + explanation flow
+         as the audio caption. -->
+    <div class="text-window" id="ln-text" hidden aria-label="Pasted text"></div>
+
+  </div>
+
+  <!-- Full-width player block, pinned to the page bottom: the current-line
+       caption (subtitles) on top, then the controls row (open-file button ·
+       play · seek). The file's name lives in the browser tab title. A low-credit
+       warning, when present, shows just above the controls. -->
+  <div class="player" id="ln-player" hidden>
+    <!-- Caption: the current line plus the preceding line (dimmed). Both are
+         markable; the LLM receives a 3-line window (those two plus the next
+         line). -->
+    <div class="now-window" id="ln-now" aria-live="polite"></div>
+    <div class="ab-titlebar">
+      <span class="ab-warn" id="ln-warn" hidden></span>
+    </div>
+    <div class="audiobar" id="ln-bar">
+      <!-- Add audio. Opens a small popover (see #ln-src-menu) offering the local
+           file picker plus, when the server has yt-dlp, a YouTube link import. -->
+      <button class="ab-menu" id="ln-open" type="button" aria-label="Add audio" title="Add audio" aria-haspopup="true" aria-expanded="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M12 3v13"/><path d="M7 8l5-5 5 5"/></svg>
+      </button>
+      <!-- Source popover: a local file, or a YouTube link. -->
+      <div class="src-menu" id="ln-src-menu" role="menu" aria-label="Add audio" hidden>
+        <button class="src-menu-item" id="ln-src-file" type="button" role="menuitem">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M12 3v13"/><path d="M7 8l5-5 5 5"/></svg>
+          <span>Open audio file…</span>
+        </button>
+        <!-- The YouTube item is appended here when /api/sources/feeds reports yt-dlp -->
+      </div>
+      <!-- Jump back 5s. Mirrors the ← arrow key for touch devices, which have no
+           keyboard. Hidden on desktop (CSS); shown on mobile, where the bar wraps
+           the seek track down to its own row. -->
+      <button class="ab-skip" id="ln-back" type="button" aria-label="Back 5 seconds" title="Back 5s" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/><text x="12" y="15.6" text-anchor="middle" font-size="9" font-weight="700" stroke="none" fill="currentColor">5</text></svg>
+      </button>
+      <button class="ab-play" id="ln-play" type="button" aria-label="Play" disabled>
+        <svg class="ab-ico-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v16a1 1 0 0 0 1.55.85l12.5-8a1 1 0 0 0 0-1.7l-12.5-8A1 1 0 0 0 7 4z" fill="currentColor"/></svg>
+        <svg class="ab-ico-pause" viewBox="0 0 24 24" aria-hidden="true"><rect x="6.4" y="3.5" width="4.2" height="17" rx="1.7" fill="currentColor"/><rect x="13.4" y="3.5" width="4.2" height="17" rx="1.7" fill="currentColor"/></svg>
+      </button>
+      <!-- Jump forward 5s. Mirrors the → arrow key (see #ln-back). -->
+      <button class="ab-skip" id="ln-fwd" type="button" aria-label="Forward 5 seconds" title="Forward 5s" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/><text x="12" y="15.6" text-anchor="middle" font-size="9" font-weight="700" stroke="none" fill="currentColor">5</text></svg>
+      </button>
+      <!-- Hide the whole player (mobile only). Sits with the transport controls;
+           tapping it collapses the player down to the floating broadcast button
+           (#ln-fab), which brings it back. Hidden on desktop (CSS). -->
+      <button class="ab-collapse" id="ln-collapse" type="button" aria-label="Hide player" title="Hide player" aria-controls="ln-player" aria-expanded="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+      </button>
+      <!-- Seek track + time. Wrapped so the pair can drop to a second row on
+           mobile as one unit (see the audiobar wrap rule) while staying inline on
+           desktop. -->
+      <div class="ab-progress">
+        <div class="ab-track" id="ln-track"><div class="ab-fill" id="ln-fill"></div></div>
+        <span class="ab-time" id="ln-time">0:00 / 0:00</span>
+      </div>
+      <!-- Video mode (desktop · YouTube sources only) — the bar's last control,
+           where a video player puts its fullscreen button. Swaps the reading area
+           for the video's picture; the transport, caption and explanations are
+           untouched. Stays hidden until a YouTube source is loaded (see
+           setYouTubeSource). -->
+      <button class="ab-video" id="ln-video-btn" type="button" hidden
+              aria-pressed="false" aria-label="Show video" title="Show video" aria-controls="ln-video">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="4"/><path d="M10 9.2l5 2.8-5 2.8z" fill="currentColor" stroke="none"/></svg>
+      </button>
+      <audio id="ln-audio"></audio>
+      <!-- The audio picker. accept is a hint only — the JS still checks the type. -->
+      <input type="file" id="ln-file" accept="audio/*,.mp3,.m4a,.wav,.ogg,.webm,.flac,.aac,.opus" hidden>
+    </div>
+  </div>
+
+  <!-- Floating "show player" button (mobile only). When the player is collapsed
+       (body.player-collapsed) this broadcast icon floats at the bottom-right —
+       styled like the record button — and tapping it brings the whole player
+       (caption · controls · seek) back. Hidden on desktop and whenever the
+       player is open (CSS). -->
+  <button class="ln-fab" id="ln-fab" type="button" aria-label="Show player" title="Show player" aria-controls="ln-player" aria-expanded="false">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/>
+      <path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/>
+      <circle cx="12" cy="12" r="2"/>
+      <path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/>
+      <path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/>
+    </svg>
+  </button>
+
+  <!-- Source sheet — a centered modal the source picker raises. Today it hosts
+       the YouTube "paste a link" form; the server resolves the link to an opaque
+       id and the Listen feature plays + transcribes the server-converted
+       (constant-bitrate) audio. -->
+  <div class="src-sheet" id="ln-src-sheet" hidden>
+    <div class="src-sheet-backdrop" id="ln-src-backdrop"></div>
+    <section class="src-sheet-card" role="dialog" aria-modal="true" aria-labelledby="ln-src-title">
+      <div class="src-sheet-head">
+        <div class="src-sheet-titles">
+          <h2 class="src-sheet-title" id="ln-src-title">YouTube</h2>
+        </div>
+        <button class="src-sheet-close" id="ln-src-close" type="button" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        </button>
+      </div>
+      <div class="src-sheet-body" id="ln-src-list"></div>
+    </section>
+  </div>
+
+<!-- Cloned from comart's app.html (the Listen/audio-playback feature only —
+     Exscriptor's mic button, modal and CSS were removed, cleanly: app-listen.js
+     never depended on them). app-listen.js itself is untouched, line for line.
+     app-base.js FIRST: it is the one file here that is not [A]'s, and
+     app-listen.js reads it. -->
+<script src="app-base.js"></script>
+<script src="app-listen.js"></script>
+</body>
+</html>

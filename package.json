@@ -1,0 +1,41 @@
+{
+  "name": "audio-materials",
+  "version": "1.0.0",
+  "description": "Standalone desktop clone of comart's Listen (audio playback) feature",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist:mac": "electron-builder --mac",
+    "dist:linux": "electron-builder --linux"
+  },
+  "author": "",
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "electron": "^32.3.3",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.audio-materials.app",
+    "productName": "Audio Materials",
+    "files": [
+      "main.js",
+      "app.html",
+      "app-base.js",
+      "app-listen.js",
+      "*.woff2",
+      "icon.svg",
+      "build/icons/256x256.png"
+    ],
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.utilities",
+      "icon": "build/icon.png"
+    },
+    "linux": {
+      "target": "deb",
+      "category": "AudioVideo",
+      "icon": "build/icons"
+    }
+  }
+}
