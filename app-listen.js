@@ -1,14 +1,15 @@
 (function () {
   "use strict";
 
-  /* Listen — YOUR audio with a synced 3-sentence transcript window and
-     word-by-word explanations. You bring the data: open (or drop) an audio file
-     and it plays locally from an object URL while the bytes are sliced and sent
-     to the self-hosted Parakeet STT service via /api/transcript/* for the
-     synced caption. Drift-prone VBR MP3/AAC uploads
-     are rejected up front (they desync in the browser) with a convert command.
-     No fixed data source — no feeds, no directory, no proxy. Wrapped in its own
-     IIFE so it can't collide with the exscriptor script above. */
+  /* Listen — a synced 3-sentence transcript window and word-by-word
+     explanations over media served from this app's own local media-library
+     backend. Pick an entry from the library and it streams straight from
+     /api/library/:id/stream (range-requested, so seeking works); the backend
+     transcribes new imports once, up front, via the self-hosted Parakeet STT
+     service, and this page just polls /api/library/:id/transcript until it's
+     ready. Playback position is saved server-side per entry, so a relaunch
+     resumes where you left off. Wrapped in its own IIFE so it can't collide
+     with the exscriptor script above. */
 
   /* ---------- render helpers ---------- */
 
@@ -180,8 +181,10 @@
   //   active  — transcript ready: caption shows the current line (buildWindow).
   function setListen(state) {
     bandLoadingEl.hidden = true;   // retired: the spinner now lives in the caption
+    libraryViewEl.hidden = state !== "idle";
     if (state === "idle") {
       nowWindow.innerHTML = "";
+      renderLibraryGrid(libraryViewEl, libraryEntries);
     } else if (state === "loading") {
       showWindowStatus("", "loading");   // spinner at the current-line spot
     }
@@ -189,8 +192,8 @@
   const warnEl = document.getElementById("ln-warn");
   const playerEl = document.getElementById("ln-player");
   const bar = document.getElementById("ln-bar");
-  const openBtn = document.getElementById("ln-open");      // bar's open-file button
-  const fileInput = document.getElementById("ln-file");
+  const openBtn = document.getElementById("ln-open");      // bar's "Library" button
+  const libraryViewEl = document.getElementById("ln-library-view");
   const playBtn = document.getElementById("ln-play");
   const backBtn = document.getElementById("ln-back");   // mobile ←: jump −5s
   const fwdBtn = document.getElementById("ln-fwd");      // mobile →: jump +5s
@@ -204,8 +207,7 @@
 
   /* ---------- state ---------- */
 
-  let currentName = "";            // the loaded file's name (for the tab title)
-  let currentObjectUrl = null;     // object URL of the loaded file (revoked on replace)
+  let currentEntry = null;         // the loaded library entry (for the tab title, progress URL, …)
   let transcriptToken = 0;
   let ticker = null;
   // While a programmatic seek (arrow keys / track click) is in flight, Chrome
@@ -1030,7 +1032,7 @@
   }
 
   async function streamExplain(panel, body, signal) {
-    const res = await fetch(comartAPI() + "/api/explain", {
+    const res = await fetch(apiBase() + "/api/explain", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
@@ -1397,7 +1399,7 @@
       if (!key || pronInflight.has(key)) continue;
       const word = btn.dataset.word, pos = btn.dataset.pos;
       pronInflight.add(key);
-      fetch(`${comartAPI()}/api/pron?word=${encodeURIComponent(word)}&pos=${encodeURIComponent(pos)}`)
+      fetch(`${apiBase()}/api/pron?word=${encodeURIComponent(word)}&pos=${encodeURIComponent(pos)}`)
         .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
         .then((data) => { pronCache.set(key, data); renderAllPanels(); })
         .catch((status) => {
@@ -1450,7 +1452,7 @@
 
   async function checkCredits() {
     try {
-      const r = await fetch(comartAPI() + "/api/credits");
+      const r = await fetch(apiBase() + "/api/credits");
       if (!r.ok) return;
       const data = await r.json();
       if (data && data.low) {
@@ -1474,169 +1476,53 @@
     teardownAllPanels();
   }
 
-  /* ---------- transcript fetch ---------- */
+  /* ---------- transcript ---------- */
 
-  // Transcripts come from the self-hosted Parakeet service on the NUC, proxied
-  // by comart. Large bodies are split to stay under proxy limits,
-  // so the file is sliced and sent in chunks; the service reassembles and
-  // transcribes (2 h of audio ≈ 3–4 min), and we poll until the job is done.
-  const TX_CHUNK = 48 * 1024 * 1024;        // per-request slice, well under the cap
-  const TX_MAX = 2 * 1024 * 1024 * 1024;    // service's total cap
-  const TX_HASH_MAX = 128 * 1024 * 1024;    // hash in-memory only up to this size
-  const TX_POLL_MS = 4000;
-  const TX_PROCESSING_LIMIT = 450;          // ~30 min of actual processing
-  const TX_QUEUED_LIMIT = 3600;             // ~4 h queued — matches the service's queue TTL
+  // Transcripts are computed once, server-side, at import time (the backend
+  // talks to the self-hosted Parakeet STT service via comart) — this just
+  // polls GET /api/library/:id/transcript until it's ready and feeds the
+  // resulting {lines, words} into the same chunk-building/reveal path as before.
+  const TX_POLL_MS = 5000;
+  const TX_POLL_MAX = 10;   // ~50s of live polling before giving up
 
-  // Opening a new file aborts the previous run's in-flight requests (the
-  // token checks alone would let an abandoned upload keep burning bandwidth).
-  let txAbort = null;
-
-  // SHA-256 of the file so the server can answer instantly from its cache
-  // without an upload. WebCrypto has no streaming digest, so large files skip
-  // the probe (the result still gets cached server-side by content hash);
-  // the cap also keeps the one-shot ArrayBuffer from OOMing mobile browsers.
-  async function fileSha256(file) {
-    if (file.size > TX_HASH_MAX) return null;
-    try {
-      const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
-      return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-    } catch {
-      return null;
-    }
-  }
-
-  async function txCall(path, init) {
-    let res;
-    try {
-      res = await fetch(path, init);
-    } catch (e) {
-      if (e && e.name === "AbortError") throw e;
-      throw new Error("Could not reach the transcription service.");
-    }
-    let data = null;
-    try { data = await res.json(); } catch { /* non-JSON body */ }
-    if (!res.ok) {
-      const err = new Error(data?.error || "Could not transcribe this file.");
-      err.status = res.status;   // lets callers tell retryable from terminal
-      throw err;
-    }
-    // 2xx but not JSON = the Access session expired and we got its login page
-    if (!data) throw new Error("Your session has expired — please reload the page.");
-    return data;
-  }
-
-  // Transient failures (network blips, 5xx, busy/not-ready) deserve retries —
-  // the service keeps uploads for 6 h and `finish` is idempotent exactly so a
-  // lost response doesn't strand a multi-GB upload. 4xx (other than 409/429)
-  // means the request itself is wrong: don't retry those.
-  function txRetryable(e) {
-    return !e.status || e.status >= 500 || e.status === 409 || e.status === 429;
-  }
-
-  // Upload the file in slices and poll the transcription job. Each step checks
-  // the token so opening another file abandons this run silently.
-  async function fetchTranscript(file) {
+  async function loadTranscript(entry, signal) {
     const token = ++transcriptToken;
-    if (txAbort) txAbort.abort();
-    const ctl = (txAbort = new AbortController());
-    const call = (path, init = {}) => txCall(path, { ...init, signal: ctl.signal });
-    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-    // No status text while loading — the band shows a spinner (see setListen).
-    try {
-      if (file.size > TX_MAX) throw new Error("This file is too large to transcribe (over 2 GB).");
-
-      const sha = await fileSha256(file);
+    if (entry.transcriptStatus === "none") return;   // no transcript for this entry; playback still works
+    for (let attempt = 0; ; attempt++) {
       if (token !== transcriptToken) return;
-      let data = await call(comartAPI() + "/api/transcript/begin", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sha256: sha, size: file.size }),
-      });
-      if (token !== transcriptToken) return;
-
-      if (!data.transcript) {
-        const upload = data.upload_id;
-        for (let n = 0; n * TX_CHUNK < file.size; n++) {
-          const slice = file.slice(n * TX_CHUNK, (n + 1) * TX_CHUNK);
-          // one retry per chunk — a single blip shouldn't sink a long upload
-          // (a re-PUT of the same chunk is safe: the service renames atomically)
-          try {
-            await call(`${comartAPI()}/api/transcript/chunk?upload=${upload}&n=${n}`, { method: "PUT", body: slice });
-          } catch (e) {
-            if (token !== transcriptToken) return;
-            if (!txRetryable(e)) throw e;
-            await sleep(2000);
-            await call(`${comartAPI()}/api/transcript/chunk?upload=${upload}&n=${n}`, { method: "PUT", body: slice });
-          }
-          if (token !== transcriptToken) return;
-        }
-
-        // finish with backoff: it can 409 while a retried chunk is still
-        // draining server-side, or lose its response to a proxy timeout —
-        // repeating it returns the same job either way.
-        let fin;
-        for (let a = 0; ; a++) {
-          try {
-            fin = await call(`${comartAPI()}/api/transcript/finish?upload=${upload}`, { method: "POST" });
-            break;
-          } catch (e) {
-            if (token !== transcriptToken) return;
-            if (a >= 4 || !txRetryable(e)) throw e;
-            await sleep(3000 * (a + 1));
-          }
-        }
-        if (token !== transcriptToken) return;
-
-        // poll until done: tolerate a few consecutive failed polls, and cap
-        // queued time separately from processing time (a busy queue is the
-        // service telling us to wait, not a hung job).
-        let fails = 0, processing = 0, queued = 0;
-        for (;;) {
-          await sleep(TX_POLL_MS);
-          if (token !== transcriptToken) return;
-          try {
-            data = await call(`${comartAPI()}/api/transcript/status?job=${fin.job_id}`);
-            fails = 0;
-          } catch (e) {
-            if (token !== transcriptToken) return;
-            if (e.status === 404 || !txRetryable(e) || ++fails >= 5) throw e;
-            continue;
-          }
-          if (token !== transcriptToken) return;
-          if (data.status === "error") throw new Error(data.error || "Could not transcribe this file.");
-          if (data.status === "done") break;
-          if (data.status === "processing" && ++processing >= TX_PROCESSING_LIMIT) {
-            throw new Error("Transcription timed out — please try again.");
-          }
-          if (data.status === "queued" && ++queued >= TX_QUEUED_LIMIT) {
-            throw new Error("The transcription queue is overloaded — please try again later.");
-          }
-        }
+      let res;
+      try {
+        res = await fetch(`${apiBase()}/api/library/${encodeURIComponent(entry.id)}/transcript`, { signal });
+      } catch {
+        return;
       }
-
-      const t = data.transcript;
-      if (!t || !t.lines || !t.lines.length) throw new Error("No speech could be transcribed from this file.");
-      const words = Array.isArray(t.words) ? t.words : [];
+      if (token !== transcriptToken) return;
+      if (res.status === 202) {
+        if (attempt === 0) showWindowStatus("Transcript is being prepared…", "loading");
+        if (attempt >= TX_POLL_MAX) { showWindowStatus("Transcript isn't ready yet — check back later.", "error"); return; }
+        await new Promise((r) => setTimeout(r, TX_POLL_MS));
+        continue;
+      }
+      if (!res.ok) { showWindowStatus("Couldn't load the transcript.", "error"); return; }
+      let data;
+      try { data = await res.json(); } catch { return; }
+      if (!data || !data.lines || !data.lines.length) { showWindowStatus("No speech could be transcribed from this file.", "error"); return; }
+      const words = Array.isArray(data.words) ? data.words : [];
       wordReveal = words.length > 0;
       // With word timings, build chunks straight from the words so each carries
       // its own timing; otherwise fall back to the segment-line grouping.
-      chunks = wordReveal ? buildChunksFromWords(words) : buildChunks(t.lines);
+      chunks = wordReveal ? buildChunksFromWords(words) : buildChunks(data.lines);
       synced = chunks.some((c) => c.start > 0);
       chunkIndex = 0;
       setListen("active");
       buildWindow();
-    } catch (err) {
-      if (token !== transcriptToken) return;
-      // On failure, surface the message in the caption (the band stays as the
-      // always-on main region).
-      bandLoadingEl.hidden = true;
-      showWindowStatus(err.message, "error");
+      return;
     }
   }
 
-  /* ---------- open an uploaded file ---------- */
+  /* ---------- time formatting ---------- */
 
-  // Playback-time format (h:mm:ss / m:ss) for the audio bar.
+  // Playback-time format (h:mm:ss / m:ss) for the audio bar and library rows.
   function fmt(s) {
     s = Math.max(0, Math.floor(s || 0));
     const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
@@ -1644,502 +1530,189 @@
     return h > 0 ? `${h}:${pad(m)}:${pad(ss)}` : `${m}:${pad(ss)}`;
   }
 
-  const AUDIO_NAME_RE = /\.(mp3|m4a|m4b|mp4|aac|ogg|oga|opus|wav|flac|webm)$/i;
+  /* ---------- library ---------- */
 
-  // Point the player at a local audio File — WITHOUT choosing how the caption is
-  // sourced (that's the caller's job: Parakeet vs. a BYO transcript file).
-  // opts.autoplay (default true) decides whether it starts on its own. The
-  // YouTube import passes false: a video is something you start when you're ready
-  // to watch it, not something that runs off while you're still deciding whether
-  // to turn the picture on. Returns false if the file isn't audio.
-  function loadAudio(file, opts) {
-    const autoplay = !opts || opts.autoplay !== false;
-    if (!file) return false;
-    if (!/^audio\//i.test(file.type || "") && !AUDIO_NAME_RE.test(file.name || "")) {
-      // Surface the rejection in the caption strip (next to the open button).
-      showWindowStatus("That doesn't look like an audio file.", "error");
-      return false;
-    }
-    currentName = file.name || "audio";
-    document.title = `${currentName} · ${BASE_TITLE}`;
-    playBtn.disabled = false;
-    backBtn.disabled = false;
-    fwdBtn.disabled = false;
-    // Opening audio is always a deliberate user action, so move focus onto play.
-    // Otherwise it stays on the source/open button, where Space would reopen the
-    // picker instead of doing something useful (now Space toggles play).
-    // .no-ring: the user didn't tab here, we put them here — don't draw a ring.
-    playBtn.classList.add("no-ring");
-    try { playBtn.focus({ preventScroll: true }); } catch {}
-    resetTranscriptState();
-    resetThread();
-    setListen("loading");
-
-    // Point the player at the local file — no proxy, no network, it's right here.
-    if (currentObjectUrl) { try { URL.revokeObjectURL(currentObjectUrl); } catch {} }
-    currentObjectUrl = URL.createObjectURL(file);
-    try { audioEl.preload = "metadata"; } catch {}
-    audioEl.src = currentObjectUrl;
-    try { audioEl.load(); } catch {}
-    if (!autoplay) {
-      // Repaint rather than trust the last state: replacing src doesn't reliably
-      // fire 'pause', so the bar could otherwise be left showing ❚❚ over an audio
-      // that never started. Focus is already on the play button (above), so Space
-      // starts it immediately.
-      paintPlay();
-      return true;
-    }
-    // Opening a file is a user gesture, so autoplay is allowed.
-    const p = audioEl.play();
-    if (p && p.catch) p.catch((e) => {
-      paintPlay();   // never leave the bar showing "playing" when it isn't
-      if (e && e.name === "NotSupportedError") showWindowStatus("This audio can't be played in your browser.", "error");
-    });
-    return true;
-  }
-
-  // Open an uploaded audio file: reject it if it's a drift-prone VBR MP3/AAC,
-  // otherwise play it locally and transcribe it through the Parakeet service.
-  async function openFile(file) {
-    if (!file) return;
-    // Claim the shared "active load" generation so a YouTube import opened while
-    // we sniff the header (audioDriftRisk is async) can supersede us, and so we
-    // supersede any in-flight server prep. Whichever open the user triggered last
-    // wins, deterministically.
-    const token = ++srcToken;
-    if (srcAbort) { try { srcAbort.abort(); } catch {} srcAbort = null; }
-    setYouTubeSource(null);   // a local file has no picture — drop any video at once
-    const risk = await audioDriftRisk(file);
-    if (token !== srcToken) return;   // a newer open took over while sniffing
-    if (risk) { showAudioRejected(file, risk); return; }
-    if (loadAudio(file)) fetchTranscript(file);
-  }
-
-  /* ---------- drift-prone (VBR) audio guard ----------
-     Reject files that play out of sync in the browser. Only TWO accepted formats
-     can drift: MP3 and raw ADTS AAC — bare chains of frames with NO timing index,
-     so the player estimates seek position as (time/duration)×bytes, which is wrong
-     for variable bitrate (Mozilla bug 994561). Every container format (WAV, FLAC,
-     M4A/MP4, Ogg/Opus, WebM) carries explicit per-sample/page timing and stays
-     accurate even when VBR — those are always allowed. */
-
-  function asciiEq(b, o, s) {
-    for (let k = 0; k < s.length; k++) if (b[o + k] !== s.charCodeAt(k)) return false;
-    return true;
-  }
-
-  function sniffAudioFormat(b, name) {
-    if (b.length >= 12 && asciiEq(b, 0, "RIFF") && asciiEq(b, 8, "WAVE")) return "wav";
-    if (asciiEq(b, 0, "fLaC")) return "flac";
-    if (asciiEq(b, 0, "OggS")) return "ogg";
-    if (b.length >= 8 && asciiEq(b, 4, "ftyp")) return "mp4";
-    if (b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3) return "webm";
-    if (asciiEq(b, 0, "ID3")) return "mp3";
-    // 0xFFE… frame sync: layer bits 00 ⇒ ADTS AAC, otherwise MP3.
-    if (b[0] === 0xff && (b[1] & 0xe0) === 0xe0) return ((b[1] >> 1) & 3) === 0 ? "aac" : "mp3";
-    const ext = (name || "").toLowerCase().match(/\.([a-z0-9]+)$/);
-    return ext ? ext[1] : "unknown";
-  }
-
-  // Parse one MPEG-audio Layer III frame header at offset i (bitrate kbps, frame
-  // length, side-info size), or null if it isn't a valid Layer III frame.
-  function parseMp3Header(b, i) {
-    if (!(b[i] === 0xff && (b[i + 1] & 0xe0) === 0xe0)) return null;
-    const ver = (b[i + 1] >> 3) & 3;        // 0=2.5 1=reserved 2=2 3=1
-    if (ver === 1) return null;
-    if (((b[i + 1] >> 1) & 3) !== 1) return null;   // Layer III only
-    const brI = (b[i + 2] >> 4) & 0x0f;
-    if (brI === 0 || brI === 0x0f) return null;
-    const srI = (b[i + 2] >> 2) & 3;
-    if (srI === 3) return null;
-    const pad = (b[i + 2] >> 1) & 1;
-    const mono = ((b[i + 3] >> 6) & 3) === 3;
-    const mpeg1 = ver === 3;
-    const BR = mpeg1
-      ? [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320]
-      : [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160];
-    const SR = ver === 3 ? [44100, 48000, 32000] : ver === 2 ? [22050, 24000, 16000] : [11025, 12000, 8000];
-    const bitrate = BR[brI], sampleRate = SR[srI];
-    if (!bitrate || !sampleRate) return null;
-    const frameLen = Math.floor((mpeg1 ? 144 : 72) * bitrate * 1000 / sampleRate) + pad;
-    const sideInfo = mpeg1 ? (mono ? 17 : 32) : (mono ? 9 : 17);
-    return { bitrate, frameLen, sideInfo };
-  }
-
-  function findMp3Sync(b, from) {
-    for (let i = from; i + 4 < b.length; i++) {
-      if (b[i] === 0xff && (b[i + 1] & 0xe0) === 0xe0 && parseMp3Header(b, i)) return i;
-    }
-    return -1;
-  }
-
-  // "cbr" | "vbr" | "unknown". Trust the LAME VBR-method nibble first, then the
-  // Xing/Info tag, then fall back to scanning frame bitrates for variation.
-  function mp3Vbr(b) {
-    const i = findMp3Sync(b, 0);
-    if (i < 0) return "unknown";
-    const h = parseMp3Header(b, i);
-    if (!h) return "unknown";
-    const to = i + 4 + h.sideInfo;
-    const tag = String.fromCharCode(b[to] || 0, b[to + 1] || 0, b[to + 2] || 0, b[to + 3] || 0);
-    // LAME tag VBR-method nibble (most reliable): 1/8 = CBR, 2/3/4/5/9 = VBR/ABR.
-    for (let p = i; p < i + 200 && p + 9 < b.length; p++) {
-      if (b[p] === 0x4c && b[p + 1] === 0x41 && b[p + 2] === 0x4d && b[p + 3] === 0x45) {  // "LAME"
-        const nib = b[p + 9] & 0x0f;
-        if (nib === 1 || nib === 8) return "cbr";
-        if (nib === 2 || nib === 3 || nib === 4 || nib === 5 || nib === 9) return "vbr";
-        break;
-      }
-    }
-    if (tag === "Info") return "cbr";
-    if (tag === "Xing") return "vbr";
-    // No Xing/Info header: scan up to 40 frames; differing bitrates ⇒ VBR.
-    const seen = new Set();
-    let pos = i, n = 0;
-    while (pos + 4 < b.length && n < 40) {
-      const fh = parseMp3Header(b, pos);
-      if (!fh || !fh.frameLen) { const ns = findMp3Sync(b, pos + 1); if (ns < 0) break; pos = ns; continue; }
-      seen.add(fh.bitrate);
-      pos += fh.frameLen; n++;
-    }
-    if (n < 4) return "unknown";
-    return seen.size > 1 ? "vbr" : "cbr";
-  }
-
-  // Raw ADTS AAC has no VBR flag — infer it from frame-length variation.
-  function adtsVbr(b) {
-    let pos = -1;
-    for (let i = 0; i + 7 < b.length; i++) {
-      if (b[i] === 0xff && (b[i + 1] & 0xf6) === 0xf0) { pos = i; break; }
-    }
-    if (pos < 0) return "unknown";
-    let min = Infinity, max = 0, n = 0;
-    while (pos + 7 < b.length && n < 80) {
-      if (!(b[pos] === 0xff && (b[pos + 1] & 0xf6) === 0xf0)) break;
-      const len = ((b[pos + 3] & 3) << 11) | (b[pos + 4] << 3) | (b[pos + 5] >> 5);
-      if (len < 7) break;
-      if (len < min) min = len;
-      if (len > max) max = len;
-      pos += len; n++;
-    }
-    if (n < 6) return "unknown";
-    return (max - min) > 4 ? "vbr" : "cbr";   // CBR ADTS frames are near-constant
-  }
-
-  // Read the file head and decide whether it will drift in the browser. Returns
-  // a {label} object to reject, or null to allow (fail open on any uncertainty).
-  async function audioDriftRisk(file) {
-    let head;
-    try { head = new Uint8Array(await file.slice(0, 12).arrayBuffer()); } catch { return null; }
-    const fmt = sniffAudioFormat(head, file.name);
-    if (fmt !== "mp3" && fmt !== "aac") return null;   // sample-accurate container ⇒ safe
-    let start = 0;
-    if (head[0] === 0x49 && head[1] === 0x44 && head[2] === 0x33) {   // skip an ID3v2 tag
-      const sz = ((head[6] & 0x7f) << 21) | ((head[7] & 0x7f) << 14) | ((head[8] & 0x7f) << 7) | (head[9] & 0x7f);
-      start = 10 + sz + ((head[5] & 0x10) ? 10 : 0);
-    }
-    let b;
-    try { b = new Uint8Array(await file.slice(start, start + 96 * 1024).arrayBuffer()); } catch { return null; }
-    const v = fmt === "mp3" ? mp3Vbr(b) : adtsVbr(b);
-    if (v !== "vbr") return null;   // cbr / unknown ⇒ allow
-    return { fmt, label: fmt === "mp3" ? "a variable-bitrate (VBR) MP3" : "a variable-bitrate (VBR) AAC" };
-  }
-
-  // Reject a drift-prone file in the caption, with a copy-ready convert command
-  // that REPLACES the original VBR file with the new CBR one. ffmpeg can't read
-  // and write the same file at once, so it always encodes to a temp file; the
-  // && steps only run if that succeeds, leaving the original untouched on error.
-  function showAudioRejected(file, info) {
-    const name = file.name || "input";
-    const base = name.replace(/\.[^.]+$/, "");
-    const tmp = base + "-cbr.tmp.mp3";
-    // MP3 stays .mp3 in place; raw-ADTS AAC must become .mp3 (the native AAC
-    // encoder isn't reliably CBR, so an AAC re-encode could be rejected again).
-    const dest = info.fmt === "mp3" ? name : base + ".mp3";
-    let cmd = 'ffmpeg -i "' + name + '" -c:a libmp3lame -b:a 192k "' + tmp + '"';
-    cmd += dest === name
-      ? ' && mv -f "' + tmp + '" "' + name + '"'                            // overwrite in place
-      : ' && rm -f "' + name + '" && mv -f "' + tmp + '" "' + dest + '"';   // drop the .aac, keep .mp3
-    document.title = BASE_TITLE;
-    nowWindow.innerHTML =
-      '<div class="window-status error">' +
-      '<p>This is ' + escapeHtml(info.label) + ", which plays out of sync in the browser.</p>" +
-      "<p>Convert it to constant bitrate (this replaces the file), then load it:</p>" +
-      '<pre style="white-space:pre-wrap;word-break:break-all;user-select:all;font-size:12px;' +
-      'background:rgba(0,0,0,0.18);padding:8px 10px;border-radius:6px;margin:6px 0;text-align:left;">' +
-      escapeHtml(cmd) + "</pre>" +
-      '<p style="font-size:12px;opacity:0.7;">CBR MP3, WAV, FLAC, M4A, Ogg/Opus and WebM all work as-is.</p>' +
-      "</div>";
-  }
-
-  // Release the object URL when the page goes away.
-  window.addEventListener("pagehide", () => {
-    if (currentObjectUrl) { try { URL.revokeObjectURL(currentObjectUrl); } catch {} currentObjectUrl = null; }
-  });
-
-  /* ---------- source picker (local file + YouTube) ----------
-     The open button raises a popover: a local file, or a YouTube link. A YouTube
-     import is fetched + re-encoded to CBR by the server (so playback can't drift)
-     and then run through the SAME play+transcribe path as a local file — no
-     client-side VBR guard needed, the server guarantees it. */
-
-  const srcMenu = document.getElementById("ln-src-menu");
-  const srcSheet = document.getElementById("ln-src-sheet");
-  const srcSheetBackdrop = document.getElementById("ln-src-backdrop");
-  const srcCloseBtn = document.getElementById("ln-src-close");
-  const srcList = document.getElementById("ln-src-list");
-  const srcTitleEl = document.getElementById("ln-src-title");
   let srcAbort = null, srcToken = 0;
-  let srcMenuLoaded = false;
 
-  function pickFile() { fileInput.click(); }
-  fileInput.addEventListener("change", () => {
-    const file = fileInput.files && fileInput.files[0];
-    fileInput.value = "";   // reset so re-picking the SAME file still fires change
-    if (file) openFile(file);
-  });
+  let libraryEntries = [];
 
-  /* --- the source popover --- */
-  function openSrcMenu() {
-    ensureSrcMenu();   // lazily populate the injected items (idempotent)
-    srcMenu.hidden = false;
-    openBtn.setAttribute("aria-expanded", "true");
-    // Capture-phase so a click anywhere else closes it before that click acts.
-    document.addEventListener("pointerdown", onOutsidePointer, true);
+  const MOVIE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="4"/><path d="M10 9.2l5 2.8-5 2.8z" fill="currentColor" stroke="none"/></svg>';
+  const AUDIO_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>';
+
+  async function loadLibrary() {
+    try {
+      const res = await fetch(`${apiBase()}/api/library`);
+      libraryEntries = await res.json();
+    } catch {
+      libraryEntries = [];
+    }
+    return libraryEntries;
   }
-  function closeSrcMenu() {
-    if (srcMenu.hidden) return;
-    srcMenu.hidden = true;
-    openBtn.setAttribute("aria-expanded", "false");
-    document.removeEventListener("pointerdown", onOutsidePointer, true);
-  }
-  function onOutsidePointer(e) {
-    if (srcMenu.contains(e.target) || openBtn.contains(e.target)) return;
-    closeSrcMenu();
-  }
-  openBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    srcMenu.hidden ? openSrcMenu() : closeSrcMenu();
-  });
-  document.getElementById("ln-src-file").addEventListener("click", () => { closeSrcMenu(); pickFile(); });
 
-  // Play-in-screen icon for the YouTube import item.
-  const YT_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="4"/><path d="M10 9.2l5 2.8-5 2.8z" fill="currentColor" stroke="none"/></svg>';
+  // A stable, arbitrary hue per entry (from its id) so fallback cards — shown
+  // when an entry has no cover art, e.g. a personal recording — read as a
+  // deliberate set of colors rather than looking broken.
+  function hueFor(id) {
+    let h = 0;
+    for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 360;
+    return h;
+  }
 
-  // Ask the server whether it can import YouTube (yt-dlp present) and, if so,
-  // append the YouTube item to the popover. Runs once; the menu still works
-  // (local file only) if the call fails.
-  async function ensureSrcMenu() {
-    if (srcMenuLoaded) return;
-    srcMenuLoaded = true;
+  // Cover art for a grid card. The <img> sits over a gradient+icon fallback
+  // that's just always there — no probing needed, a poster.jpg 404 (most
+  // entries won't have one; see backend/poster.js) simply hides the <img>
+  // and the fallback shows through.
+  function libraryThumbHtml(entry) {
+    const icon = entry.hasVideo ? MOVIE_ICON : AUDIO_ICON;
+    return `<span class="lib-thumb" style="--hue:${hueFor(entry.id)}">` +
+      `<img src="${apiBase()}/api/library/${encodeURIComponent(entry.id)}/poster" alt="" loading="lazy" onerror="this.style.display='none'">` +
+      `<span class="lib-thumb-fallback">${icon}</span></span>`;
+  }
+
+  // Grid card for the idle-state home view — cover, title, kind, and a
+  // continue-watching line (mirrors comart's own book-library cards: title /
+  // author / "Chapter 8 · 71%").
+  function libraryCardHtml(entry) {
+    const kind = entry.type === "podcast" ? "Podcast" : entry.type === "movie" ? "Movie" : "Audio";
+    const pct = entry.durationSec > 0 ? Math.round((entry.progressSec / entry.durationSec) * 100) : 0;
+    const progressLine = entry.transcriptStatus === "processing" || entry.transcriptStatus === "pending"
+      ? "Transcribing…"
+      : entry.transcriptStatus === "error" ? "Transcript failed"
+      : pct > 0 ? `${fmt(entry.progressSec)} · ${pct}%` : fmt(entry.durationSec);
+    return `<button class="lib-card lib-item" type="button" data-id="${escapeHtml(entry.id)}">` +
+      libraryThumbHtml(entry) +
+      `<span class="lib-card-title">${escapeHtml(entry.title || "Untitled")}</span>` +
+      `<span class="lib-card-kind">${kind}</span>` +
+      `<span class="lib-card-progress">${progressLine}</span></button>`;
+  }
+
+  function wireLibraryClicks(container) {
+    container.querySelectorAll(".lib-item").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const entry = libraryEntries.find((e) => e.id === btn.dataset.id);
+        if (entry) setSource(entry);
+      });
+    });
+  }
+  const EMPTY_LIBRARY_HTML = '<div class="window-status"><p>Nothing in the library yet.</p></div>';
+
+  // The home view: a poster grid.
+  function renderLibraryGrid(container, entries) {
+    container.innerHTML = entries.length ? entries.map(libraryCardHtml).join("") : EMPTY_LIBRARY_HTML;
+    wireLibraryClicks(container);
+  }
+
+  // The library button always returns to the home view — stop wherever we
+  // are and show the grid, exactly like a fresh launch (BASE_TITLE, disabled
+  // transport, no video). Re-picking the same entry resumes from its saved
+  // position (restoreProgress in setSource), so nothing is lost by leaving.
+  function goHome() {
+    if (currentEntry) flushProgress();
+    currentEntry = null;
+    srcToken++;
+    transcriptToken++;
+    if (srcAbort) { try { srcAbort.abort(); } catch {} }
+    audioEl.pause();
+    audioEl.removeAttribute("src");
+    try { audioEl.load(); } catch {}
+    // audioEl's own 'pause' event is async and can be dropped by the
+    // load() right above (which resets the element's state machine) before
+    // it dispatches — paint the stopped state directly rather than hope it
+    // survives.
+    paintPlay();
+    setVideoCapability(null);
+    playBtn.disabled = true;
+    backBtn.disabled = true;
+    fwdBtn.disabled = true;
+    document.title = BASE_TITLE;
+    setListen("idle");
+    loadLibrary().then(() => { if (!currentEntry) renderLibraryGrid(libraryViewEl, libraryEntries); });
+  }
+  openBtn.addEventListener("click", () => goHome());
+
+  /* --- playback progress, saved server-side per entry --- */
+
+  const PROGRESS_SAVE_MS = 5000;
+  let lastProgressSave = 0;
+
+  function progressURL(entry) {
+    return `${apiBase()}/api/library/${encodeURIComponent(entry.id)}/progress`;
+  }
+  async function restoreProgress(entry, signal) {
     let data;
     try {
-      const res = await fetch(comartAPI() + "/api/sources/feeds");
-      data = await res.json();
-    } catch { srcMenuLoaded = false; return; }   // allow a retry on next open
-    // Desktop audio first — the server owns the microphone-free capture and
-    // reports here whether it can do it at all (Linux + a PulseAudio socket).
-    if (data && data.youtube) {
-      const yt = document.createElement("button");
-      yt.type = "button";
-      yt.className = "src-menu-item";
-      yt.setAttribute("role", "menuitem");
-      yt.innerHTML = YT_ICON + "<span>YouTube…<small>Paste a video link</small></span>";
-      yt.addEventListener("click", () => { closeSrcMenu(); openYouTubePrompt(); });
-      srcMenu.appendChild(yt);
+      const r = await fetch(progressURL(entry), { signal });
+      if (!r.ok) return;
+      data = await r.json();
+    } catch {
+      return;
     }
+    if (currentEntry !== entry) return;   // superseded mid-fetch
+    const pos = Number(data && data.positionSec) || 0;
+    if (pos <= 0) return;
+    const doSeek = () => { seekTo(pos); audioEl.removeEventListener("loadedmetadata", doSeek); };
+    if (audioEl.readyState >= 1) doSeek(); else audioEl.addEventListener("loadedmetadata", doSeek);
   }
-
-  // The YouTube "paste a link" prompt, rendered into the shared source sheet.
-  // Submitting POSTs the link to the server, which resolves it to an opaque id;
-  // we then open that id through openSource, the same fetch + CBR + transcribe
-  // path a local file ends in.
-  function openYouTubePrompt() {
-    sheetOpener = openBtn;
-    srcTitleEl.textContent = "YouTube";
-    showSheet();
-    srcList.innerHTML = "";
-
-    const form = document.createElement("form");
-    form.className = "yt-form";
-    const input = document.createElement("input");
-    input.type = "url";
-    input.className = "yt-input";
-    input.placeholder = "Paste a YouTube link…";
-    input.autocomplete = "off";
-    input.spellcheck = false;
-    const load = document.createElement("button");
-    load.type = "submit";
-    load.className = "yt-load";
-    load.textContent = "Load";
-    const status = document.createElement("div");
-    status.className = "yt-status";
-    form.append(input, load, status);
-    srcList.appendChild(form);
-    try { input.focus(); } catch {}
-
-    let busy = false;
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      if (busy) return;
-      const url = input.value.trim();
-      if (!url) { try { input.focus(); } catch {} return; }
-      busy = true;
-      input.disabled = load.disabled = true;
-      status.innerHTML = '<div class="window-status"><div class="spinner"></div><p>Checking the link…</p></div>';
-      let data;
-      try {
-        const res = await fetch(comartAPI() + "/api/sources/youtube", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url }),
-        });
-        data = await res.json().catch(() => null);
-        if (!res.ok) throw new Error((data && data.error) || "Couldn't load that video.");
-      } catch (err) {
-        busy = false;
-        input.disabled = load.disabled = false;
-        status.innerHTML = '<div class="window-status error"><p>' +
-          escapeHtml(err.message || "Couldn't load that video.") + "</p></div>";
-        try { input.focus(); } catch {}
-        return;
-      }
-      if (srcSheet.hidden) return;   // closed while loading
-      closeSheet(false);
-      // The same id resolves the picture (/api/sources/yt-video), so hand it to
-      // openSource as the video source too — that's what offers the video toggle.
-      openSource({ id: data.id, title: data.title || "YouTube video" },
-        comartAPI() + "/api/sources/yt-audio?id=" + encodeURIComponent(data.id), data.id);
-    });
+  function flushProgress() {
+    if (!currentEntry || !audioEl.src) return;
+    const body = JSON.stringify({ positionSec: effPos() });
+    const url = progressURL(currentEntry);
+    if (navigator.sendBeacon) {
+      try { navigator.sendBeacon(url, new Blob([body], { type: "application/json" })); return; } catch {}
+    }
+    try { fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body, keepalive: true }); } catch {}
   }
+  audioEl.addEventListener("pause", flushProgress);
+  window.addEventListener("pagehide", flushProgress);
+  window.addEventListener("beforeunload", flushProgress);
 
-  /* --- the shared source sheet --- */
-  function showSheet() {
-    if (!srcSheet.hidden) return;
-    srcSheet.hidden = false;
-    try { srcCloseBtn.focus(); } catch {}   // move focus into the aria-modal dialog
-  }
-  // Which control raised the sheet — focus returns there on close (dialog a11y).
-  // Today that is always the add-audio button (the YouTube prompt hangs off it),
-  // but the sheet doesn't need to know that.
-  let sheetOpener = null;
-  function closeSheet(returnFocus = true) {
-    if (srcSheet.hidden) return;
-    srcSheet.hidden = true;
-    // Return focus to the opener — EXCEPT when an item was picked (returnFocus=false),
-    // where the load path moves focus itself (e.g. loadAudio → play button), so
-    // Space won't reopen the picker.
-    if (returnFocus && sheetOpener) { try { sheetOpener.focus(); } catch {} }
-  }
-  srcSheetBackdrop.addEventListener("click", closeSheet);
-  srcCloseBtn.addEventListener("click", closeSheet);
-  document.addEventListener("keydown", (e) => {
-    if (e.key !== "Escape") return;
-    if (!srcSheet.hidden) closeSheet();
-    else closeSrcMenu();
-  });
+  /* --- load a library entry --- */
 
-  /* --- open a server-prepared source --- */
-  // Make a filesystem-safe display name for the fetched blob (drives the tab
-  // title; the bytes themselves are the server's CBR MP3).
-  function safeName(s) {
-    s = String(s || "audio").replace(/[\/\\:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim();
-    return (s.slice(0, 120) || "audio") + ".mp3";
-  }
-
-  // Open a server-prepared source (today only a YouTube import): fetch the CBR
-  // MP3 the server produced, then run it through the same play + transcribe path
-  // as a local file. audioURL is required — the caller names the endpoint.
-  // ytId is the opaque id of a YouTube import — the one source kind that also has
-  // a picture available (see the video-mode block). It's declared only once the
-  // audio is actually in hand, and cleared up front, so the video toggle never
-  // points at a source that failed to open.
-  async function openSource(ep, audioURL, ytId) {
-    if (!ep || !ep.id || !audioURL) return;
+  // Point the player at a library entry, streamed straight from the backend —
+  // no blob, no object URL, the same URL the video element uses when the entry
+  // has a picture (see setVideoCapability). Restores saved progress before
+  // playing, so there's no audible jump.
+  async function setSource(entry) {
+    if (!entry) return;
     const token = ++srcToken;
     if (srcAbort) { try { srcAbort.abort(); } catch {} }
     const ctl = (srcAbort = new AbortController());
-    setYouTubeSource(null);
-    // Abandon any transcript run for the previously loaded file.
-    transcriptToken++;
-    if (txAbort) { try { txAbort.abort(); } catch {} }
 
-    currentName = ep.title || "audio";
-    document.title = currentName + " · " + BASE_TITLE;
+    flushProgress();   // persist the outgoing entry's position first
+    transcriptToken++;
+    setVideoCapability(null);   // withdraw the toggle until confirmed
+
+    currentEntry = entry;
+    document.title = `${entry.title || "audio"} · ${BASE_TITLE}`;
     resetTranscriptState();
     resetThread();
     playBtn.disabled = true;
     backBtn.disabled = true;
     fwdBtn.disabled = true;
-    try { audioEl.pause(); } catch {}
-    showWindowStatus("Preparing audio on the server…", "loading");
-    // A cold video (first open) waits on a server download + ffmpeg transcode;
-    // reassure after a few seconds so a long tail doesn't read as a hang.
-    const hintTimer = setTimeout(() => {
-      if (token === srcToken) showWindowStatus("Still preparing… longer videos take a moment.", "loading");
-    }, 8000);
+    setListen("loading");
 
-    let file;
-    try {
-      const res = await fetch(audioURL, { signal: ctl.signal });
-      if (token !== srcToken) return;
-      if (!res.ok) {
-        let msg = "Couldn't prepare this audio.";
-        try { const j = await res.json(); if (j && j.error) msg = j.error; } catch {}
-        throw new Error(msg);
-      }
-      const blob = await res.blob();
-      if (token !== srcToken) return;
-      if (!blob.size) throw new Error("The audio was empty.");
-      file = new File([blob], safeName(ep.title), { type: "audio/mpeg" });
-    } catch (e) {
-      clearTimeout(hintTimer);
-      if (e && e.name === "AbortError") return;
-      if (token !== srcToken) return;
-      document.title = BASE_TITLE;   // don't leave the tab stuck on a failed video
-      currentName = "";
-      showWindowStatus(e.message || "Couldn't prepare this audio.", "error");
-      // No audio loaded, so loadAudio's focus-to-play never runs. We started the
-      // import from the sheet (which deliberately didn't return focus), so put
-      // focus back on the open button rather than stranding it on <body>. (Abort /
-      // superseded returns above are owned by the newer action — left untouched.)
-      try { openBtn.focus(); } catch {}
-      return;
-    }
-    clearTimeout(hintTimer);
+    audioEl.src = `${apiBase()}/api/library/${encodeURIComponent(entry.id)}/stream`;
+    try { audioEl.load(); } catch {}
+    playBtn.disabled = false;
+    backBtn.disabled = false;
+    fwdBtn.disabled = false;
+    // Opening an entry is always a deliberate user action, so move focus onto
+    // play (it never draws a focus ring — see the .ab-play CSS comment).
+    try { playBtn.focus({ preventScroll: true }); } catch {}
+
+    // Movies show video, audio/podcasts don't — automatic, per entry (see
+    // applyVideoMode: no manual toggle, video mode just tracks hasVideo).
+    setVideoCapability(entry.hasVideo ? entry.id : null);
+    await restoreProgress(entry, ctl.signal);
     if (token !== srcToken) return;
-    // Server-guaranteed CBR — straight into the normal play + transcribe path.
-    // A server-prepared source waits for you to press play; ytId is set for every
-    // one of them today, so autoplay stays off.
-    if (loadAudio(file, { autoplay: !ytId })) {
-      setYouTubeSource(ytId);   // offer (or withdraw) the video toggle for this source
-      fetchTranscript(file);
-    }
-  }
+    loadTranscript(entry, ctl.signal);
 
-  // The whole page is a drop target. preventDefault on dragover is what allows a
-  // drop at all; the band lights up (.drag-over) while a file hovers the window.
-  let dragDepth = 0;
-  const draggingFiles = (e) => !!e.dataTransfer && Array.prototype.includes.call(e.dataTransfer.types, "Files");
-  window.addEventListener("dragenter", (e) => {
-    if (!draggingFiles(e)) return;
-    e.preventDefault();
-    dragDepth++;
-    bandEl.classList.add("drag-over");
-  });
-  window.addEventListener("dragover", (e) => { if (draggingFiles(e)) e.preventDefault(); });
-  window.addEventListener("dragleave", () => {
-    dragDepth = Math.max(0, dragDepth - 1);
-    if (!dragDepth) bandEl.classList.remove("drag-over");
-  });
-  window.addEventListener("drop", (e) => {
-    if (!e.dataTransfer) return;
-    e.preventDefault();
-    dragDepth = 0;
-    bandEl.classList.remove("drag-over");
-    const file = e.dataTransfer.files && e.dataTransfer.files[0];
-    if (file) openFile(file);
-  });
+    const p = audioEl.play();
+    if (p && p.catch) p.catch((e) => {
+      paintPlay();   // never leave the bar showing "playing" when it isn't
+      if (e && e.name === "NotSupportedError") showWindowStatus("This audio can't be played in your browser.", "error");
+    });
+  }
 
   /* ---------- audio bar wiring ---------- */
 
@@ -2173,16 +1746,7 @@
     // mashing ← / → fast accumulates the full distance instead of stalling.
     seekTo(effPos() + delta);
   }
-  playBtn.addEventListener("click", (e) => {
-    // A mouse click leaves focus on the button; the next keypress would then raise
-    // the focus ring around it. e.detail is 0 for a keyboard-driven click — a
-    // keyboard user tabbed here and has earned the ring, so leave theirs alone.
-    if (e.detail > 0) playBtn.classList.add("no-ring");
-    togglePlay();
-  });
-  // Focus left the button, so the suppression expires with it: whatever brings
-  // focus back next (a Tab, say) gets judged on its own merits.
-  playBtn.addEventListener("blur", () => playBtn.classList.remove("no-ring"));
+  playBtn.addEventListener("click", () => { togglePlay(); });
   // Mobile ← / → buttons: same ±5s jump as the arrow keys (which touch devices
   // lack). seekBy already no-ops when nothing is loaded.
   // The loop (if any) is already cleared by the document mousedown above, so these are
@@ -2349,6 +1913,12 @@
           effPos() >= loopEnd) {
         seekTo(Math.max(0, loopStart - LOOP_LEAD_IN));
       }
+      // Persist playback progress every few seconds, independent of tab visibility —
+      // a backgrounded tab still plays audio and should still checkpoint it.
+      if (!audioEl.paused && !audioEl.error && performance.now() - lastProgressSave >= PROGRESS_SAVE_MS) {
+        lastProgressSave = performance.now();
+        flushProgress();
+      }
       // Skip the caption sync when there's nothing to sync, the clip errored, or the tab
       // is hidden (background tabs throttle setInterval, so this would just churn).
       if (document.hidden || !audioEl.src || audioEl.error) return;
@@ -2410,7 +1980,6 @@
   document.addEventListener("keydown", (e) => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (isEditableTarget(document.activeElement)) return;
-    if (!srcSheet.hidden || !srcMenu.hidden) return;   // a picker is open — don't drive playback
     if (!audioEl.src) return;
     if (e.key === "Escape") {
       if (loopStart != null) { e.preventDefault(); clearLoop(); }
@@ -2573,22 +2142,20 @@
     });
   });
 
-  /* ---------- video mode (YouTube sources · desktop only) ----------
+  /* ---------- video mode (any hasVideo library entry · desktop only) ----------
 
-     A YouTube link is imported as AUDIO — a server-made CBR MP3 that the
-     transcript's word timings are aligned to. Video mode adds the PICTURE on top
-     without touching any of that: the server prepares an audio-free MP4
-     (/api/sources/yt-video) and a MUTED <video> plays it slaved to #ln-audio. The
-     audio element stays the single clock, so no amount of picture buffering,
-     stalling or keyframe-snapping can drag the caption out of sync — the worst a
-     bad video stream can do is look choppy.
+     A movie entry streams the SAME file to both elements: the <audio> element is
+     always the clock the transcript's word timings are aligned to, and — when the
+     entry has a picture — a MUTED <video> plays the identical /stream URL slaved
+     to it. The audio element stays the single clock, so no amount of picture
+     buffering, stalling or keyframe-snapping can drag the caption out of sync —
+     the worst a bad video stream can do is look choppy.
 
      Nothing here is allowed to accumulate over a session — the whole point of
      keeping the video tab-local:
-       · no blob, no object URL: the element streams a plain src URL, so the
-         BROWSER owns the buffer and Range-fetches only what's actually watched.
-         (The audio path deliberately does the opposite — it needs the bytes in
-         hand to upload them for transcription. A video has no such second use.)
+       · no blob, no object URL: the element streams a plain src URL (range-
+         requested), so the BROWSER owns the buffer and fetches only what's
+         actually watched.
        · ONE <video> element, in the markup, reused forever, with its listeners
          attached exactly once here — so toggling a hundred times adds none.
        · turning video mode off (or loading any other source, or crossing to a
@@ -2596,10 +2163,7 @@
          drop the src ATTRIBUTE, load() — the spec's recipe for making the element
          let go of the decoder, the network stream and every buffered range.
        · drift correction rides the caption's existing 150 ms ticker, so the
-         feature owns no timer of its own; the one-shot "still preparing" hints are
-         cleared on every state change.
-       · the server answers with Cache-Control: no-store, so once the element lets
-         go, the browser is holding no copy of the file either.
+         feature owns no timer of its own.
 
      Desktop only: the band is a fixed-height flex column there, and a phone has no
      room for a picture above the panel and the player. The toggle is CSS-hidden
@@ -2608,7 +2172,6 @@
   const videoWrap = document.getElementById("ln-video");
   const videoEl = document.getElementById("ln-video-el");
   const videoStatusEl = document.getElementById("ln-video-status");
-  const videoBtn = document.getElementById("ln-video-btn");
 
   // Drift bands against the audio clock, in seconds. Below RATE the picture is
   // left alone; between RATE and SEEK we trim playbackRate and let it coast back
@@ -2619,13 +2182,9 @@
   const VIDEO_RATE_TRIM = 0.06;   // ±6% on a MUTED picture is invisible; a seek stutters
   const VIDEO_SEEK_EPS = 0.08;    // even a forced resync skips a jump smaller than this
 
-  let ytSourceId = null;    // opaque id of the loaded YouTube source (null = not YouTube)
-  let videoMode = false;    // the toggle. In memory ONLY — never persisted, so every
-                            // tab (and every reload) starts on audio, by design.
+  let videoSourceId = null; // id of the loaded entry, when it has a picture (null = audio-only)
   let videoState = "idle";  // idle | loading | ready | error
-  let videoToken = 0;       // bumped by every attach/release; a stale probe/hint bails
-  let videoAbort = null;    // AbortController for the in-flight prepare probe
-  let videoHints = [];      // reassurance timers during a long prepare
+  let videoToken = 0;       // bumped by every attach/release; a stale callback bails
 
   const videoCapable = () => isDesktopBand();
   const videoShown = () => !videoWrap.hidden;
@@ -2645,26 +2204,12 @@
     videoStatusEl.hidden = false;
   }
 
-  function clearVideoHints() {
-    for (const t of videoHints) clearTimeout(t);
-    videoHints = [];
-  }
-  // A one-shot reassurance line, valid only while THIS attach is still current.
-  function videoHint(ms, message) {
-    const token = videoToken;
-    videoHints.push(setTimeout(() => {
-      if (token === videoToken && videoState === "loading") videoStatus(message, "loading");
-    }, ms));
-  }
-
   // Let go of everything the stage holds. Safe to call at any time, any number of
   // times — the reconcilers below lean on that.
   function releaseVideo() {
-    clearVideoHints();
-    if (videoAbort) { try { videoAbort.abort(); } catch {} videoAbort = null; }
     const hadSrc = videoEl.hasAttribute("src");
     videoState = "idle";
-    videoToken++;             // any probe or hint still in flight is now stale
+    videoToken++;             // any callback still in flight is now stale
     if (hadSrc) {
       try { videoEl.pause(); } catch {}
       try { videoEl.playbackRate = 1; } catch {}
@@ -2678,15 +2223,11 @@
     videoStatus("", null);
   }
 
-  // Reconcile stage + button with (mode, source, viewport). Idempotent, so it can
-  // be called from a resize, a source change or the toggle without care.
+  // Reconcile the stage with (source, viewport). No manual toggle — video mode
+  // just tracks whether the loaded entry has a picture. Idempotent, so it can
+  // be called freely from a resize or a source change.
   function applyVideoMode() {
-    const offerable = !!ytSourceId && videoCapable();
-    const on = offerable && videoMode;
-    videoBtn.hidden = !offerable;
-    videoBtn.setAttribute("aria-pressed", String(on));
-    videoBtn.setAttribute("aria-label", on ? "Hide video" : "Show video");
-    videoBtn.title = on ? "Hide video" : "Show video";
+    const on = !!videoSourceId && videoCapable();
     // Video mode flag on <body> (see the body.video-on rules — the record button
     // gets a drop-shadow so its glyph stays legible over the picture).
     document.body.classList.toggle("video-on", on);
@@ -2699,55 +2240,28 @@
     if (videoState === "idle") attachVideo();   // otherwise it's already loading/ready/failed
   }
 
-  // Declare the loaded source's YouTube identity: the opaque id for a YouTube
-  // import, null for a local file or a failed open. EVERY open path calls this,
-  // so the stage and the toggle can never outlive the source they belong to. The
-  // mode itself survives a switch between two YouTube videos (the reader is still
-  // watching), and applyVideoMode then prepares the new one.
-  function setYouTubeSource(id) {
-    ytSourceId = id || null;
+  // Declare the loaded source's video capability: the entry id when it has a
+  // picture, null for an audio-only entry or a failed open. EVERY open path
+  // calls this, so the stage and the toggle can never outlive the source they
+  // belong to. The mode itself survives a switch between two video entries (the
+  // reader is still watching), and applyVideoMode then prepares the new one.
+  function setVideoCapability(id) {
+    videoSourceId = id || null;
     releaseVideo();      // the previous picture's stream and decoder go now, not later
     applyVideoMode();
   }
 
-  // Prepare the picture on the server, then attach it. The probe call is what
-  // turns a server-side failure into a real sentence ("too large", "YouTube is
-  // blocking…") — a <video> element could only ever report a generic decode
-  // error. Only once it succeeds does the element get a src, so it streams a warm
-  // cache file instead of holding a request open through the whole download.
-  async function attachVideo() {
-    if (!ytSourceId) return;
-    const url = comartAPI() + "/api/sources/yt-video?id=" + encodeURIComponent(ytSourceId);
-    const token = ++videoToken;
-    if (videoAbort) { try { videoAbort.abort(); } catch {} }
-    const ctl = (videoAbort = new AbortController());
+  // Attach the picture: the SAME /stream URL the audio element uses for this
+  // entry — muted, so the doubled range-read is silent. No probe needed (unlike
+  // a cold YouTube download, an imported file has no server-side prep step);
+  // failures surface through the element's own 'error' listener below.
+  function attachVideo() {
+    if (!videoSourceId) return;
+    videoToken++;
     videoState = "loading";
-    videoStatus("Preparing the video on the server…", "loading");
-    // A cold video is a full yt-dlp download plus a remux, so say what's happening
-    // rather than spinning silently. The audio keeps playing throughout — you can
-    // listen and read while the picture is being fetched.
-    videoHint(8000, "Downloading the video on the server…");
-    videoHint(45000, "Still going — the first play of a long video takes a few minutes.");
-    let data;
-    try {
-      const res = await fetch(url + "&probe=1", { signal: ctl.signal });
-      if (token !== videoToken) return;
-      data = await res.json().catch(() => null);
-      if (!res.ok) throw new Error((data && data.error) || "Couldn't prepare the video.");
-    } catch (e) {
-      if (e && e.name === "AbortError") return;   // released or superseded — the newer action owns it
-      if (token !== videoToken) return;
-      clearVideoHints();
-      videoState = "error";
-      videoStatus(e.message || "Couldn't prepare the video.", "error");
-      return;
-    }
-    if (token !== videoToken) return;
-    clearVideoHints();
-    videoAbort = null;
-    videoEl.src = url;            // plain src: the browser Range-streams it and owns the buffer
+    videoStatus("", "loading");   // spinner only, until 'loadeddata' clears it
+    videoEl.src = `${apiBase()}/api/library/${encodeURIComponent(videoSourceId)}/stream`;
     try { videoEl.load(); } catch {}
-    videoStatus("", "loading");   // spinner only, until the first frame decodes
   }
 
   // Slave the muted picture to the audio clock. Called from the caption's 150 ms
@@ -2811,7 +2325,6 @@
   // untouched: preventDefault doesn't stop propagation.
   videoEl.addEventListener("mousedown", (e) => { e.preventDefault(); });
   videoEl.addEventListener("click", () => { togglePlay(); });
-  videoBtn.addEventListener("click", () => { videoMode = !videoMode; applyVideoMode(); });
   audioEl.addEventListener("play", () => syncVideoClock(false));
   audioEl.addEventListener("pause", () => syncVideoClock(false));
   audioEl.addEventListener("seeked", () => syncVideoClock(true));
@@ -2825,9 +2338,9 @@
   /* ---------- boot ---------- */
 
   playerEl.hidden = false;
-  setListen("idle");   // show the upload prompt; the caption stays empty
   startTicker();
   checkCredits();
-  applyVideoMode();  // no source yet → stage down, toggle hidden (one source of truth)
-  ensureSrcMenu();   // pre-populate the source menu so it's ready on first open
+  applyVideoMode();  // no source yet → stage down (one source of truth)
+  loadLibrary().then(() => { if (!currentEntry) renderLibraryGrid(libraryViewEl, libraryEntries); });
+  setListen("idle");   // show the library grid; the caption stays empty
 })();

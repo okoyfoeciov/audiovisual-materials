@@ -48,6 +48,16 @@ function createWindow() {
   win.on("maximize", notifyMaximizedChange);
   win.on("unmaximize", notifyMaximizedChange);
 
+  // F11 (Electron's default "Toggle Full Screen" accelerator, from the
+  // implicit application menu — this app sets none of its own) hits
+  // win.setFullScreen(), which is native OS fullscreen and has no idea our
+  // title bar is just a <div> in the page, not real window chrome. Tell the
+  // renderer so titlebar.js can hide it — window controls (minimize included)
+  // are meaningless once there's no window to see.
+  const notifyFullscreenChange = () => win.webContents.send("window:fullscreen-changed", win.isFullScreen());
+  win.on("enter-full-screen", notifyFullscreenChange);
+  win.on("leave-full-screen", notifyFullscreenChange);
+
   win.loadFile(path.join(__dirname, "app.html"));
 
   return win;

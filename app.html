@@ -121,10 +121,11 @@
   }
 
   /* ======================================================================
-     LISTEN — YOUR uploaded audio with a synced transcript + word-by-word
+     LISTEN — movies, audio and podcasts served from this app's own local
+     media-library backend, with a synced transcript + word-by-word
      explanations. The main region (the "band") holds the explanation panel and,
-     until a file is loaded, the upload prompt; the rolling 3-sentence transcript
-     window and a full-width bar at the page bottom make up the audio player.
+     until an entry is loaded, the library list; the rolling 3-sentence transcript
+     window and a full-width bar at the page bottom make up the player.
      (Inner class names are kept verbatim to match the Listen JS below.)
      ====================================================================== */
 
@@ -199,18 +200,82 @@
   /* While dragging, suppress text selection + pointer noise. */
   body.resizing { cursor: row-resize; user-select: none; -webkit-user-select: none; }
 
-  /* Page-wide drag-over cue: a dashed accent ring inside the band. */
-  .explain-band.drag-over::after {
-    content: "";
-    position: absolute;
-    inset: 10px;
-    border: 2px dashed var(--accent);
-    border-radius: 16px;
-    pointer-events: none;
-    z-index: 5;
+  /* Library grid (the "home page") — fills the same region a video would
+     (order:-1, flex:1 1 auto), shown while nothing is loaded. A responsive
+     poster grid, one .lib-card per entry (see .lib-card below). */
+  .library-view {
+    order: -1;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 32px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 28px 20px;
+    align-content: start;
   }
+  .library-view[hidden] { display: none; }
+  .library-view .window-status { grid-column: 1 / -1; }
 
-  /* ---------- video stage (YouTube sources · desktop only) ----------
+  /* One card: cover, title, kind, continue-watching line. Bare button, no
+     surface — the cover art itself is the only "chrome". */
+  .lib-card {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+    padding: 0;
+    background: none;
+    border: 0;
+    text-align: left;
+    cursor: pointer;
+    font-family: var(--sans);
+  }
+  .lib-card:focus-visible { outline: none; }
+  .lib-card:focus-visible .lib-thumb { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .lib-card-title {
+    font-family: var(--serif);
+    font-weight: 700;
+    font-size: 14.5px;
+    color: var(--text);
+    line-height: 1.3;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .lib-card-kind { font-size: 12.5px; color: var(--text-2); }
+  .lib-card-progress { font-size: 11.5px; color: var(--text-dim); }
+
+  /* Cover art for a grid card. A gradient+icon fallback always sits
+     underneath; the <img> just covers it when a poster.jpg exists (see
+     backend/poster.js) and stays hidden (onerror) when it 404s, which is the
+     common case for anything without cover art. */
+  .lib-thumb {
+    position: relative;
+    display: block;
+    width: 100%;
+    aspect-ratio: 2 / 3;
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--surface-2);
+    box-shadow: var(--shadow);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+  }
+  .lib-card:hover .lib-thumb { transform: translateY(-3px); box-shadow: var(--shadow-hover); }
+  .lib-thumb img { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; object-fit: cover; display: block; }
+  .lib-thumb-fallback {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(160deg, hsl(var(--hue, 30) 35% 24%), hsl(calc(var(--hue, 30) + 35) 35% 12%));
+  }
+  .lib-thumb-fallback svg { width: 34%; height: 34%; color: rgba(255, 255, 255, 0.85); }
+
+  /* ---------- video stage (any hasVideo library entry · desktop only) ----------
      Fills the main region ABOVE the explanation panel while a video is shown
      (order:-1, flex:1 1 auto). Letterboxed on pure black — not the warm page
      background — since that is what reads as "picture" behind a frame that
@@ -531,7 +596,7 @@
 
   /* ---------- bottom player block (full width) ---------- */
   /* Holds the synced caption (.now-window), an optional low-credit warning, and
-     the controls row (open-file · play · seek). It is the bottom flex child of
+     the controls row (library · play · seek). It is the bottom flex child of
      the body shell. */
   .player {
     position: relative;
@@ -557,7 +622,7 @@
   .audiobar { position: relative; display: flex; align-items: center; gap: 13px; touch-action: manipulation; }
   /* No circle, no surface: the button IS just its icon, matching the floating
      record / import buttons. The 34px box stays as an invisible touch target. */
-  .ab-menu, .ab-play, .ab-skip, .ab-collapse, .ab-video {
+  .ab-menu, .ab-play, .ab-skip, .ab-collapse {
     flex: none;
     width: 34px; height: 34px;
     padding: 0;
@@ -577,18 +642,16 @@
   }
   /* Keyboard focus ring — there's no border/surface now, so the bare icon needs
      an outline to show focus. Matches the .pron-badge / record-button pattern. */
-  .ab-menu:focus-visible, .ab-play:focus-visible, .ab-skip:focus-visible,
-  .ab-collapse:focus-visible, .ab-video:focus-visible {
+  .ab-menu:focus-visible, .ab-skip:focus-visible,
+  .ab-collapse:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
-  /* …except when focus was PARKED on play rather than navigated to it. Opening a
-     file moves focus here (so Space is useful), and a mouse click leaves it here.
-     Focus then sits on the button while the player is driven from the keyboard —
-     and the first keypress flips the browser into "keyboard mode", raising an
-     orange ring around a button nobody ever tabbed to. Those two paths set
-     .no-ring and blur clears it, so a real Tab onto play still shows the ring. */
-  .ab-play.no-ring:focus-visible { outline: none; }
+  /* Play never gets one — not the accent ring above, not the browser's own
+     default outline either. setSource() parks focus here on every load (so
+     Space is useful right away), and that shouldn't draw a ring around a
+     button nobody tabbed to. */
+  .ab-play:focus-visible { outline: none; }
   .ab-menu { color: var(--text-soft); }
   .ab-menu:hover { color: var(--text); }
   .ab-menu svg { width: 20px; height: 20px; display: block; }
@@ -617,22 +680,6 @@
   .ab-collapse:hover { color: var(--text); }
   .ab-collapse:active { transform: scale(0.94); }
   .ab-collapse svg { width: 20px; height: 20px; display: block; }
-
-  /* Video mode toggle — the last control in the bar, right of the time, where a
-     video player puts its fullscreen button. Hidden until a YouTube source is
-     loaded (setYouTubeSource), and hidden altogether on mobile. Lit in the accent
-     colour while the picture is showing, so the bar says which mode you're in. */
-  .ab-video { display: none; color: var(--text-soft); }
-  .ab-video:hover { color: var(--text); }
-  .ab-video:active { transform: scale(0.94); }
-  .ab-video svg { width: 20px; height: 20px; display: block; }
-  .ab-video[aria-pressed="true"] { color: var(--accent); }
-  /* Desktop only, and only for a YouTube source: the base rule keeps it hidden and
-     this reveals it once the JS drops the [hidden] attribute. The mobile media
-     query never reveals it, so a phone can't turn video mode on at all. */
-  @media (min-width: 761px) {
-    .ab-video:not([hidden]) { display: flex; }
-  }
 
   /* Floating "show player" button (mobile only). When the player is collapsed,
      this broadcast glyph floats at the bottom-right corner — same bare-glyph
@@ -682,133 +729,6 @@
     min-width: 84px;
     text-align: right;
   }
-
-  /* ---------- source picker ----------
-     The open button no longer opens the file dialog directly: it raises a small
-     popover offering the local file picker plus a YouTube link import, whose
-     paste-a-link form opens in a centered sheet. */
-  .src-menu {
-    position: absolute;
-    left: 0;
-    /* Sit just above the whole bar. Anchoring to 100% (the bar's top edge) rather
-       than a fixed offset keeps the gap correct when the bar wraps to two rows on
-       mobile — a fixed bottom would land partway up the transport buttons there. */
-    bottom: calc(100% + 8px);
-    z-index: 90;
-    min-width: 232px;
-    padding: 6px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    box-shadow: var(--shadow-hover);
-  }
-  .src-menu[hidden] { display: none; }
-  .src-menu-item {
-    display: flex;
-    align-items: center;
-    gap: 11px;
-    width: 100%;
-    padding: 9px 10px;
-    background: none;
-    border: 0;
-    border-radius: 8px;
-    color: var(--text);
-    font-family: var(--sans);
-    font-size: 14px;
-    text-align: left;
-    cursor: pointer;
-  }
-  .src-menu-item:hover, .src-menu-item:focus-visible {
-    background: var(--word-hover);
-    outline: none;
-  }
-  .src-menu-item svg { width: 18px; height: 18px; flex: none; color: var(--text-soft); }
-  .src-menu-item span { display: flex; flex-direction: column; line-height: 1.3; min-width: 0; }
-  .src-menu-item small { color: var(--text-dim); font-size: 11.5px; }
-  /* YouTube "paste a link" form, shown inside the source sheet. */
-  .yt-form { display: flex; flex-direction: column; gap: 12px; padding: 4px 2px; }
-  .yt-input {
-    width: 100%;
-    box-sizing: border-box;
-    padding: 11px 12px;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 9px;
-    color: var(--text);
-    font-family: var(--sans);
-    font-size: 15px;
-  }
-  .yt-input:focus-visible { outline: none; border-color: var(--accent); }
-  .yt-input:disabled { opacity: 0.55; }
-  .yt-load {
-    align-self: flex-start;
-    padding: 9px 18px;
-    background: var(--accent);
-    border: 0;
-    border-radius: 9px;
-    color: #1a1003;
-    font-family: var(--sans);
-    font-size: 14px;
-    font-weight: 600;
-    cursor: pointer;
-  }
-  .yt-load:disabled { opacity: 0.55; cursor: default; }
-  .yt-status { min-height: 18px; }
-  .yt-status .window-status { padding: 0; }
-
-  /* Source sheet — a centered modal raised by the source picker (today: the
-     YouTube link form). */
-  .src-sheet {
-    position: fixed;
-    inset: 0;
-    z-index: 110;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 20px;
-  }
-  .src-sheet[hidden] { display: none; }
-  .src-sheet-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.5); }
-  .src-sheet-card {
-    position: relative;
-    z-index: 1;
-    width: 100%;
-    max-width: 540px;
-    max-height: 82vh;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
-  }
-  .src-sheet-head {
-    flex: none;
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
-    padding: 16px 18px 12px;
-    border-bottom: 1px solid var(--hairline);
-  }
-  .src-sheet-titles { flex: 1 1 auto; min-width: 0; }
-  .src-sheet-title { font-family: var(--serif); font-size: 19px; font-weight: 700; color: var(--text); }
-  .src-sheet-close {
-    flex: none;
-    width: 30px;
-    height: 30px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--surface);
-    color: var(--text-soft);
-    cursor: pointer;
-  }
-  .src-sheet-close:hover { background: var(--word-hover); color: var(--text); }
-  .src-sheet-close svg { width: 15px; height: 15px; display: block; }
-  .src-sheet-body { overflow-y: auto; padding: 6px; }
 
   @media (prefers-reduced-motion: reduce) {
     .spinner, .thinking span { animation: none; }
@@ -938,12 +858,6 @@
     user-select: none;
   }
   .electron-titlebar[hidden] { display: none; }
-  .electron-titlebar-label {
-    padding-left: 14px;
-    font-size: 12px;
-    letter-spacing: 0.02em;
-    color: var(--text-2);
-  }
   .electron-titlebar-controls {
     margin-left: auto;
     display: flex;
@@ -974,7 +888,6 @@
        once it confirms window.electronWindow.platform isn't "darwin"; stays
        hidden on macOS, which uses native inset traffic lights instead. -->
   <div class="electron-titlebar" id="electron-titlebar" hidden>
-    <span class="electron-titlebar-label">Audiovisual Materials</span>
     <div class="electron-titlebar-controls">
       <button class="electron-titlebar-btn" id="electron-titlebar-min" type="button" aria-label="Minimize">
         <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1" aria-hidden="true"><line x1="1" y1="5" x2="9" y2="5"/></svg>
@@ -993,15 +906,19 @@
        player and holds the single explanation panel (R1, injected at runtime,
        see makePanel), anchored to the bottom at a draggable height. -->
   <div class="explain-band" id="ln-explain-band">
-    <!-- Loading spinner shown while an uploaded file's transcript is being
+    <!-- Loading spinner shown while a library entry's transcript is being
          generated — no text, just the animation. -->
     <div class="band-loading" id="ln-band-loading" hidden aria-label="Loading"><div class="spinner"></div></div>
 
-    <!-- Video stage — YouTube sources, desktop only. The <video> is MUTED and
-         slaved to #ln-audio (the clock the transcript is aligned to), holds no
-         blob — its src is a plain URL the browser Range-streams — and has that
-         src removed the moment video mode goes off, so nothing accumulates
-         across a session. -->
+    <!-- Library list — shown when nothing is loaded (setListen("idle")) and
+         populated from GET /api/library; each row funnels into setSource(). -->
+    <div class="library-view" id="ln-library-view" hidden></div>
+
+    <!-- Video stage — any library entry with hasVideo, desktop only. The
+         <video> is MUTED and slaved to #ln-audio (the clock the transcript is
+         aligned to), holds no blob — its src is a plain URL the browser
+         Range-streams — and has that src removed the moment video mode goes
+         off, so nothing accumulates across a session. -->
     <div class="video-window" id="ln-video" hidden aria-label="Video">
       <!-- No tabindex on purpose: a <video> without `controls` isn't focusable,
            and tabindex="-1" would make it CLICK-focusable — which is what put
@@ -1015,8 +932,8 @@
   </div>
 
   <!-- Full-width player block, pinned to the page bottom: the current-line
-       caption (subtitles) on top, then the controls row (open-file button ·
-       play · seek). The file's name lives in the browser tab title. A low-credit
+       caption (subtitles) on top, then the controls row (library button ·
+       play · seek). The entry's title lives in the browser tab title. A low-credit
        warning, when present, shows just above the controls. -->
   <div class="player" id="ln-player" hidden>
     <!-- Caption: the current line plus the preceding line (dimmed). Both are
@@ -1027,19 +944,12 @@
       <span class="ab-warn" id="ln-warn" hidden></span>
     </div>
     <div class="audiobar" id="ln-bar">
-      <!-- Add audio. Opens a small popover (see #ln-src-menu) offering the local
-           file picker plus, when the server has yt-dlp, a YouTube link import. -->
-      <button class="ab-menu" id="ln-open" type="button" aria-label="Add audio" title="Add audio" aria-haspopup="true" aria-expanded="false">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M12 3v13"/><path d="M7 8l5-5 5 5"/></svg>
+      <!-- Library. Returns to the home grid (goHome()) — stops whatever's
+           loaded and shows every entry the backend has; re-picking one
+           resumes from its saved position. -->
+      <button class="ab-menu" id="ln-open" type="button" aria-label="Library" title="Library">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg>
       </button>
-      <!-- Source popover: a local file, or a YouTube link. -->
-      <div class="src-menu" id="ln-src-menu" role="menu" aria-label="Add audio" hidden>
-        <button class="src-menu-item" id="ln-src-file" type="button" role="menuitem">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M12 3v13"/><path d="M7 8l5-5 5 5"/></svg>
-          <span>Open audio file…</span>
-        </button>
-        <!-- The YouTube item is appended here when /api/sources/feeds reports yt-dlp -->
-      </div>
       <!-- Jump back 5s. Mirrors the ← arrow key for touch devices, which have no
            keyboard. Hidden on desktop (CSS); shown on mobile, where the bar wraps
            the seek track down to its own row. -->
@@ -1067,18 +977,7 @@
         <div class="ab-track" id="ln-track"><div class="ab-fill" id="ln-fill"></div></div>
         <span class="ab-time" id="ln-time">0:00 / 0:00</span>
       </div>
-      <!-- Video mode (desktop · YouTube sources only) — the bar's last control,
-           where a video player puts its fullscreen button. Swaps the reading area
-           for the video's picture; the transport, caption and explanations are
-           untouched. Stays hidden until a YouTube source is loaded (see
-           setYouTubeSource). -->
-      <button class="ab-video" id="ln-video-btn" type="button" hidden
-              aria-pressed="false" aria-label="Show video" title="Show video" aria-controls="ln-video">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="4"/><path d="M10 9.2l5 2.8-5 2.8z" fill="currentColor" stroke="none"/></svg>
-      </button>
       <audio id="ln-audio"></audio>
-      <!-- The audio picker. accept is a hint only — the JS still checks the type. -->
-      <input type="file" id="ln-file" accept="audio/*,.mp3,.m4a,.wav,.ogg,.webm,.flac,.aac,.opus" hidden>
     </div>
   </div>
 
@@ -1096,25 +995,6 @@
       <path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/>
     </svg>
   </button>
-
-  <!-- Source sheet — a centered modal the source picker raises. Today it hosts
-       the YouTube "paste a link" form; the server resolves the link to an opaque
-       id and the Listen feature plays + transcribes the server-converted
-       (constant-bitrate) audio. -->
-  <div class="src-sheet" id="ln-src-sheet" hidden>
-    <div class="src-sheet-backdrop" id="ln-src-backdrop"></div>
-    <section class="src-sheet-card" role="dialog" aria-modal="true" aria-labelledby="ln-src-title">
-      <div class="src-sheet-head">
-        <div class="src-sheet-titles">
-          <h2 class="src-sheet-title" id="ln-src-title">YouTube</h2>
-        </div>
-        <button class="src-sheet-close" id="ln-src-close" type="button" aria-label="Close">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-        </button>
-      </div>
-      <div class="src-sheet-body" id="ln-src-list"></div>
-    </section>
-  </div>
 
 <!-- Electron shell only, unrelated to comart's page: wires up the custom
      title bar above on Linux/Windows. Runs before app-base.js/app-listen.js

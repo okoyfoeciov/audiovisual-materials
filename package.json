@@ -1,16 +1,20 @@
 {
   "name": "audiovisual-materials",
   "version": "1.0.0",
-  "description": "Standalone desktop clone of comart's Listen (audio playback) feature",
+  "description": "Standalone desktop media-library player, backed by a local backend (backend/), clone of comart's Listen (audio playback) feature",
   "private": true,
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "backend": "node backend/server.js",
     "dist:mac": "electron-builder --mac",
     "dist:linux": "electron-builder --linux"
   },
   "author": "",
   "license": "UNLICENSED",
+  "dependencies": {
+    "express": "^4.22.2"
+  },
   "devDependencies": {
     "electron": "^32.3.3",
     "electron-builder": "^25.1.8"

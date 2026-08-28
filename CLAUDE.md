@@ -117,11 +117,14 @@ anything matching it) must never be committed. Everything else — including
 
 ### About this project
 
-An Electron desktop clone of comart's "Listen" audio playback feature.
-`app-listen.js` is the near-verbatim cloned page; `app-base.js` is the one file
-adapted for standalone use (see its own header comment for why — it replaces
-comart's `chrome.storage`-based API base-URL resolution with a synchronous
-`localStorage` read, since this page has no origin exemption comart's
+An Electron desktop clone of comart's "Listen" audio playback feature,
+repurposed to browse and play a personal media library (movies, audio,
+podcasts) served by this app's own local backend rather than comart.
+`app-listen.js` is the cloned page, adapted for the library; `app-base.js` is
+the one file that resolves the API base URL (see its own header comment) —
+originally comart's, now this app's own backend, tailscale-served, with the
+same synchronous-`localStorage`-read shape comart's version used (adapted
+from `chrome.storage`, since this page has no origin exemption comart's
 extension gets). `main.js` is the Electron shell. Avoid changing
 `app-listen.js` unless the task requires it — keep adaptations isolated to
 `app-base.js`/`main.js` so the diff against comart's original stays legible.
