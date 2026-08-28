@@ -10,6 +10,7 @@ function createWindow() {
     title: "Audio Materials",
     icon: path.join(__dirname, "build", "icons", "256x256.png"),
     backgroundColor: "#181818", // matches app.html's <meta name="theme-color">
+    show: false,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -21,6 +22,13 @@ function createWindow() {
   // is left untouched (it's part of the cloned page), so without this Electron's
   // default page-title sync would rename the window to it after load.
   win.on("page-title-updated", (event) => event.preventDefault());
+
+  // Wait for ready-to-show so the window appears already maximized instead of
+  // flashing at its default size first.
+  win.once("ready-to-show", () => {
+    win.maximize();
+    win.show();
+  });
 
   win.loadFile(path.join(__dirname, "app.html"));
 
