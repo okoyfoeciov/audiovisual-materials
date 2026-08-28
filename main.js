@@ -7,7 +7,7 @@ function createWindow() {
     height: 860,
     minWidth: 480,
     minHeight: 480,
-    title: "Audio Materials",
+    title: "Audiovisual Materials",
     icon: path.join(__dirname, "build", "icons", "256x256.png"),
     backgroundColor: "#181818", // matches app.html's <meta name="theme-color">
     show: false,
@@ -28,7 +28,7 @@ function createWindow() {
     },
   });
 
-  // Keep "Audio Materials" as the OS window title — app.html's own <title>ComArt</title>
+  // Keep "Audiovisual Materials" as the OS window title — app.html's own <title>ComArt</title>
   // is left untouched (it's part of the cloned page), so without this Electron's
   // default page-title sync would rename the window to it after load.
   win.on("page-title-updated", (event) => event.preventDefault());

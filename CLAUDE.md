@@ -1,4 +1,4 @@
-# CLAUDE.md — audio-materials
+# CLAUDE.md — audiovisual-materials
 
 Guidance for Claude Code (and any other agent) working in this repository.
 
@@ -39,7 +39,7 @@ state — it says nothing about what this repo is supposed to use.
 ```bash
 git config --local credential.https://github.com.helper ""            # reset inherited helpers
 git config --local --add credential.https://github.com.helper \
-    "/home/james/audio-materials/.githelpers/credential-from-env.sh"
+    "/home/james/audiovisual-materials/.githelpers/credential-from-env.sh"
 ```
 
 The empty first value **resets** the helper list inherited from `~/.gitconfig`,
@@ -94,7 +94,7 @@ Check with `git config --local --list` before the first commit of a session.
 
 ### Remote
 
-`origin` is `https://github.com/okoyfoeciov/audio-materials.git` (private).
+`origin` is `https://github.com/okoyfoeciov/audiovisual-materials.git` (private).
 
 ---
 

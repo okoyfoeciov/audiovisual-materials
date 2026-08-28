@@ -1,5 +1,5 @@
 {
-  "name": "audio-materials",
+  "name": "audiovisual-materials",
   "version": "1.0.0",
   "description": "Standalone desktop clone of comart's Listen (audio playback) feature",
   "private": true,
@@ -16,8 +16,8 @@
     "electron-builder": "^25.1.8"
   },
   "build": {
-    "appId": "com.audio-materials.app",
-    "productName": "Audio Materials",
+    "appId": "com.audiovisual-materials.app",
+    "productName": "Audiovisual Materials",
     "files": [
       "main.js",
       "preload.js",
