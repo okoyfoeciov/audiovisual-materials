@@ -53,23 +53,36 @@ app.all(EXPLAIN_PATHS, express.raw({ type: () => true, limit: "10mb" }), async (
 
 app.use(express.json());
 
+function toLibrarySummary(e) {
+  return {
+    id: e.id,
+    type: e.type,
+    title: e.title,
+    hasVideo: e.hasVideo,
+    durationSec: e.durationSec,
+    progressSec: e.progressSec || 0,
+    transcriptStatus: e.transcriptStatus,
+  };
+}
+
+// Top-level entries only — a segment (an entry with a parentId, e.g. one
+// PBS NewsHour clip belonging to an episode "collection" entry) is reached
+// via its parent's /children route below, not listed here.
 app.get("/api/library", (req, res) => {
-  res.json(
-    db.listEntries().map((e) => ({
-      id: e.id,
-      type: e.type,
-      title: e.title,
-      hasVideo: e.hasVideo,
-      durationSec: e.durationSec,
-      progressSec: e.progressSec || 0,
-      transcriptStatus: e.transcriptStatus,
-    }))
-  );
+  res.json(db.listEntries().filter((e) => !e.parentId).map(toLibrarySummary));
+});
+
+// Segments belonging to a "collection" entry (see toLibrarySummary above).
+// Ordinary entries just have no children — an empty array, not an error.
+app.get("/api/library/:id/children", (req, res) => {
+  const entry = db.getEntry(req.params.id);
+  if (!entry) return res.sendStatus(404);
+  res.json(db.listChildren(req.params.id).map(toLibrarySummary));
 });
 
 app.get("/api/library/:id/stream", (req, res) => {
   const entry = db.getEntry(req.params.id);
-  if (!entry || !fs.existsSync(entry.filePath)) return res.sendStatus(404);
+  if (!entry || !entry.filePath || !fs.existsSync(entry.filePath)) return res.sendStatus(404);
   // res.sendFile (built on the `send` package) already implements HTTP
   // Range + conditional GET, so this is seekable video/audio for free.
   res.sendFile(entry.filePath, (err) => {
@@ -81,12 +94,22 @@ app.get("/api/library/:id/stream", (req, res) => {
 // alongside the media file. Not every entry has one (an obscure title or a
 // personal recording won't match anything on iTunes) — a 404 here is normal,
 // and the frontend falls back to a generated placeholder card on image error.
+// A nested collection with no cover art of its own (e.g. a day within a
+// show) falls back to its parent's poster, walking up the chain — most days
+// won't have individually fetched art, but the show usually does.
 app.get("/api/library/:id/poster", (req, res) => {
-  const entry = db.getEntry(req.params.id);
+  let entry = db.getEntry(req.params.id);
   if (!entry) return res.sendStatus(404);
-  const posterPath = path.join(path.dirname(entry.filePath), "poster.jpg");
-  if (!fs.existsSync(posterPath)) return res.sendStatus(404);
-  res.sendFile(posterPath);
+  while (entry) {
+    // entry.dir is set at import time for every entry, media or collection.
+    // Older entries imported before that field existed only have filePath,
+    // so fall back to its directory for them.
+    const dir = entry.dir || (entry.filePath && path.dirname(entry.filePath));
+    const posterPath = dir && path.join(dir, "poster.jpg");
+    if (posterPath && fs.existsSync(posterPath)) return res.sendFile(posterPath);
+    entry = entry.type === "collection" && entry.parentId ? db.getEntry(entry.parentId) : null;
+  }
+  return res.sendStatus(404);
 });
 
 app.get("/api/library/:id/transcript", (req, res) => {

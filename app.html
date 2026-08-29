@@ -275,6 +275,24 @@
   }
   .lib-thumb-fallback svg { width: 34%; height: 34%; color: rgba(255, 255, 255, 0.85); }
 
+  /* Back button for a nested view (a collection's children — e.g. the days
+     within a show, or the segments within a day). Spans the full grid width
+     like .window-status above; everything below it is the exact same
+     .lib-card grid as the root library — nesting changes nothing else. */
+  .lib-list-back {
+    grid-column: 1 / -1;
+    justify-self: start;
+    margin: 0 0 4px;
+    padding: 0;
+    background: none;
+    border: 0;
+    cursor: pointer;
+    font-family: var(--sans);
+    font-size: 13px;
+    color: var(--text-2);
+  }
+  .lib-list-back:hover { color: var(--text); }
+
   /* ---------- video stage (any hasVideo library entry · desktop only) ----------
      Fills the main region ABOVE the explanation panel while a video is shown
      (order:-1, flex:1 1 auto). Letterboxed on pure black — not the warm page

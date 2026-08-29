@@ -1535,9 +1535,16 @@
   let srcAbort = null, srcToken = 0;
 
   let libraryEntries = [];
+  // Stack of {entry, children} frames for nested collections (e.g. a show
+  // entry containing day entries, each containing segment entries) — the
+  // last frame is the list currently shown. Empty means the top grid.
+  let collectionStack = [];
 
   const MOVIE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="4"/><path d="M10 9.2l5 2.8-5 2.8z" fill="currentColor" stroke="none"/></svg>';
   const AUDIO_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>';
+  // A "collection" entry (e.g. a news episode grouping several individually-
+  // imported segments) has no media of its own to hint at with MOVIE/AUDIO_ICON.
+  const COLLECTION_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="4" rx="1"/><rect x="3" y="10" width="18" height="4" rx="1"/><rect x="3" y="16" width="18" height="4" rx="1"/></svg>';
 
   async function loadLibrary() {
     try {
@@ -1558,12 +1565,16 @@
     return h;
   }
 
+  function iconFor(entry) {
+    return entry.type === "collection" ? COLLECTION_ICON : entry.hasVideo ? MOVIE_ICON : AUDIO_ICON;
+  }
+
   // Cover art for a grid card. The <img> sits over a gradient+icon fallback
   // that's just always there — no probing needed, a poster.jpg 404 (most
   // entries won't have one; see backend/poster.js) simply hides the <img>
   // and the fallback shows through.
   function libraryThumbHtml(entry) {
-    const icon = entry.hasVideo ? MOVIE_ICON : AUDIO_ICON;
+    const icon = iconFor(entry);
     return `<span class="lib-thumb" style="--hue:${hueFor(entry.id)}">` +
       `<img src="${apiBase()}/api/library/${encodeURIComponent(entry.id)}/poster" alt="" loading="lazy" onerror="this.style.display='none'">` +
       `<span class="lib-thumb-fallback">${icon}</span></span>`;
@@ -1571,11 +1582,15 @@
 
   // Grid card for the idle-state home view — cover, title, kind, and a
   // continue-watching line (mirrors comart's own book-library cards: title /
-  // author / "Chapter 8 · 71%").
+  // author / "Chapter 8 · 71%"). A "collection" entry (e.g. a news episode
+  // grouping several segments) has no playback progress of its own, so its
+  // line just says how it opens.
   function libraryCardHtml(entry) {
-    const kind = entry.type === "podcast" ? "Podcast" : entry.type === "movie" ? "Movie" : "Audio";
+    const kind = entry.type === "collection" ? "Collection"
+      : entry.type === "podcast" ? "Podcast" : entry.type === "movie" ? "Movie" : "Audio";
     const pct = entry.durationSec > 0 ? Math.round((entry.progressSec / entry.durationSec) * 100) : 0;
-    const progressLine = entry.transcriptStatus === "processing" || entry.transcriptStatus === "pending"
+    const progressLine = entry.type === "collection" ? "View segments"
+      : entry.transcriptStatus === "processing" || entry.transcriptStatus === "pending"
       ? "Transcribing…"
       : entry.transcriptStatus === "error" ? "Transcript failed"
       : pct > 0 ? `${fmt(entry.progressSec)} · ${pct}%` : fmt(entry.durationSec);
@@ -1586,20 +1601,66 @@
       `<span class="lib-card-progress">${progressLine}</span></button>`;
   }
 
-  function wireLibraryClicks(container) {
+  // Shared by every clickable entry — grid cards and list rows alike. A
+  // collection (whatever level it's nested at — a show, a day within it,
+  // etc.) opens its children; anything else plays.
+  function onEntryActivate(entry) {
+    if (!entry) return;
+    if (entry.type === "collection") openCollection(entry);
+    else setSource(entry);
+  }
+
+  const EMPTY_LIBRARY_HTML = '<div class="window-status"><p>Nothing in the library yet.</p></div>';
+
+  function wireEntryClicks(container, entries) {
     container.querySelectorAll(".lib-item").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const entry = libraryEntries.find((e) => e.id === btn.dataset.id);
-        if (entry) setSource(entry);
-      });
+      btn.addEventListener("click", () => onEntryActivate(entries.find((e) => e.id === btn.dataset.id)));
     });
   }
-  const EMPTY_LIBRARY_HTML = '<div class="window-status"><p>Nothing in the library yet.</p></div>';
+
+  // Every level — the root library, or (with backLabel) a collection's
+  // children one level down — renders as the exact same card grid. A
+  // nested view's only visual difference from the root is the back button
+  // spanning the top of the grid (see .lib-list-back in app.html).
+  function renderGrid(container, entries, backLabel) {
+    const back = backLabel ? `<button class="lib-list-back" type="button">← ${escapeHtml(backLabel)}</button>` : "";
+    container.innerHTML = back + (entries.length ? entries.map(libraryCardHtml).join("") : EMPTY_LIBRARY_HTML);
+    if (backLabel) container.querySelector(".lib-list-back").addEventListener("click", backOneLevel);
+    wireEntryClicks(container, entries);
+  }
 
   // The home view: a poster grid.
   function renderLibraryGrid(container, entries) {
-    container.innerHTML = entries.length ? entries.map(libraryCardHtml).join("") : EMPTY_LIBRARY_HTML;
-    wireLibraryClicks(container);
+    collectionStack = [];
+    renderGrid(container, entries, null);
+  }
+
+  // The current collection frame's children, with a back button labeled for
+  // wherever "back" goes: the parent collection one level up, or "Library"
+  // at the top of the stack.
+  function renderCollectionView() {
+    const depth = collectionStack.length;
+    const frame = collectionStack[depth - 1];
+    const backLabel = depth > 1 ? collectionStack[depth - 2].entry.title : "Library";
+    renderGrid(libraryViewEl, frame.children, backLabel);
+  }
+
+  async function openCollection(entry) {
+    let children = [];
+    try {
+      const res = await fetch(`${apiBase()}/api/library/${encodeURIComponent(entry.id)}/children`);
+      children = await res.json();
+    } catch {
+      children = [];
+    }
+    collectionStack.push({ entry, children });
+    renderCollectionView();
+  }
+
+  function backOneLevel() {
+    collectionStack.pop();
+    if (collectionStack.length) renderCollectionView();
+    else renderLibraryGrid(libraryViewEl, libraryEntries);
   }
 
   // The library button always returns to the home view — stop wherever we

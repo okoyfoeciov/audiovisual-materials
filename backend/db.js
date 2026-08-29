@@ -38,6 +38,10 @@ function getEntry(id) {
   return load().entries.find((e) => e.id === id) || null;
 }
 
+function listChildren(parentId) {
+  return load().entries.filter((e) => e.parentId === parentId);
+}
+
 function upsertEntry(entry) {
   const data = load();
   const i = data.entries.findIndex((e) => e.id === entry.id);
@@ -73,12 +77,22 @@ function setTranscriptStatus(id, status) {
   return true;
 }
 
+function deleteEntry(id) {
+  const data = load();
+  const before = data.entries.length;
+  data.entries = data.entries.filter((e) => e.id !== id);
+  save(data);
+  return data.entries.length !== before;
+}
+
 module.exports = {
   LIBRARY_DIR,
   DB_PATH,
   listEntries,
   getEntry,
+  listChildren,
   upsertEntry,
+  deleteEntry,
   getProgress,
   setProgress,
   setTranscriptStatus,
