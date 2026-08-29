@@ -204,6 +204,7 @@
      (order:-1, flex:1 1 auto), shown while nothing is loaded. A responsive
      poster grid, one .lib-card per entry (see .lib-card below). */
   .library-view {
+    position: relative;
     order: -1;
     flex: 1 1 auto;
     min-height: 0;
@@ -276,13 +277,18 @@
   .lib-thumb-fallback svg { width: 34%; height: 34%; color: rgba(255, 255, 255, 0.85); }
 
   /* Back button for a nested view (a collection's children — e.g. the days
-     within a show, or the segments within a day). Spans the full grid width
-     like .window-status above; everything below it is the exact same
-     .lib-card grid as the root library — nesting changes nothing else. */
+     within a show, or the segments within a day). Absolutely positioned
+     within .library-view's own top/left padding, rather than a grid row of
+     its own — a grid row would push every card down when the button
+     appears, so the first card would sit lower on a nested page than on
+     the root grid. This way the grid layout is identical whether the
+     button is there or not; it just floats in space the padding already
+     reserves. */
   .lib-list-back {
-    grid-column: 1 / -1;
-    justify-self: start;
-    margin: 0 0 4px;
+    position: absolute;
+    top: 10px;
+    left: 32px;
+    margin: 0;
     padding: 0;
     background: none;
     border: 0;

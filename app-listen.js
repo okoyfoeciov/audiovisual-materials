@@ -1619,9 +1619,10 @@
   }
 
   // Every level — the root library, or (with backLabel) a collection's
-  // children one level down — renders as the exact same card grid. A
-  // nested view's only visual difference from the root is the back button
-  // spanning the top of the grid (see .lib-list-back in app.html).
+  // children one level down — renders as the exact same card grid, cards
+  // starting at the exact same position either way. The back button is
+  // absolutely positioned (see .lib-list-back in app.html), not a grid row
+  // of its own, specifically so its presence never shifts the cards.
   function renderGrid(container, entries, backLabel) {
     const back = backLabel ? `<button class="lib-list-back" type="button">← ${escapeHtml(backLabel)}</button>` : "";
     container.innerHTML = back + (entries.length ? entries.map(libraryCardHtml).join("") : EMPTY_LIBRARY_HTML);
