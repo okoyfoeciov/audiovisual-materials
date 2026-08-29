@@ -10,7 +10,7 @@
     "dist:mac": "electron-builder --mac",
     "dist:linux": "electron-builder --linux"
   },
-  "author": "",
+  "author": "james <khiem.le@stanyangroup.com>",
   "license": "UNLICENSED",
   "dependencies": {
     "express": "^4.22.2"
