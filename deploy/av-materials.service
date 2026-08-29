@@ -1,0 +1,18 @@
+# systemd USER unit. Install:
+#   cp deploy/av-materials.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now av-materials
+# (Lingering is enabled for james, so it starts at boot without login.)
+[Unit]
+Description=audiovisual-materials backend (media library server)
+After=network-online.target
+
+[Service]
+WorkingDirectory=/home/james/audiovisual-materials/backend
+ExecStart=/home/james/.nvm/versions/node/v24.15.0/bin/node server.js
+Restart=on-failure
+RestartSec=3
+Environment=PORT=8768
+
+[Install]
+WantedBy=default.target
