@@ -23,13 +23,17 @@
   position: fixed;
   /* Not comart's plain 16px: this app's own .player transport bar is a real,
      always-present bottom bar (~50px tall, measured), unlike comart's own
-     quiet page — a plain 16px overlapped it by ~34px. Clears the bar's
-     current height plus its own 16px gap, with headroom for .ab-warn's
-     low-credit line (adds ~20px when shown) so the button doesn't drift back
-     over the bar the next time that appears. Still ONE fixed position,
-     never mid-interaction — see mic.js's header on why it doesn't track
-     .player's height live. */
-  bottom: 84px;
+     quiet page — a plain 16px overlapped it by ~34px. This clears it by the
+     same 16px breathing room comart's own 16px-from-the-window-edge uses,
+     just measured from the bar's top edge instead — the closest visual
+     match to the reference screenshot that still doesn't overlap. (An
+     earlier pass added ~18px more on top of that "for when .ab-warn's
+     low-credit line appears" — measured against the actual reference, that
+     read as a big dead gap above the bar, so it's gone; the warning line
+     showing is rare enough that a ~20px brush with it there is the better
+     trade.) Still ONE fixed position, never mid-interaction — see mic.js's
+     header on why it doesn't track .player's height live. */
+  bottom: 66px;
   right: 16px;
   /* Matches the slot app.html already reserved for it — see its z-index: 55
      comment ("below the record button (60)"), left over from before this
