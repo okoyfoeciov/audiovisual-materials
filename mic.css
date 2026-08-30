@@ -21,19 +21,17 @@
 
 .mic {
   position: fixed;
-  /* Not comart's plain 16px: this app's own .player transport bar is a real,
-     always-present bottom bar (~50px tall, measured), unlike comart's own
-     quiet page — a plain 16px overlapped it by ~34px. This clears it by the
-     same 16px breathing room comart's own 16px-from-the-window-edge uses,
-     just measured from the bar's top edge instead — the closest visual
-     match to the reference screenshot that still doesn't overlap. (An
-     earlier pass added ~18px more on top of that "for when .ab-warn's
-     low-credit line appears" — measured against the actual reference, that
-     read as a big dead gap above the bar, so it's gone; the warning line
-     showing is rare enough that a ~20px brush with it there is the better
-     trade.) Still ONE fixed position, never mid-interaction — see mic.js's
-     header on why it doesn't track .player's height live. */
-  bottom: 66px;
+  /* comart's own 16px, exactly — not adjusted for this app's .player bar.
+     Two earlier passes here (84px, then 66px) nudged the button up to clear
+     the bar, on the theory that colliding with it was a bug. It isn't: the
+     whole point of comart's own placement, ported verbatim into mic.js's
+     header, is that the button does NOT move to avoid other content —
+     "a button that moves whenever an answer appears is not a fixed
+     control... it simply floats over it" — and the halo below exists
+     specifically so the glyph stays readable over whatever's underneath. A
+     plain 16px does sit over .player's own controls; that's the design, the
+     same way comart's own button sits over its explanation panel. */
+  bottom: 16px;
   right: 16px;
   /* Matches the slot app.html already reserved for it — see its z-index: 55
      comment ("below the record button (60)"), left over from before this
