@@ -1,6 +1,6 @@
 {
   "name": "audiovisual-materials",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Standalone desktop media-library player, backed by a local backend (backend/), clone of comart's Listen (audio playback) feature",
   "private": true,
   "main": "main.js",
