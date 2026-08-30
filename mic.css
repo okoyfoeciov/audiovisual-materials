@@ -1,0 +1,271 @@
+/* mic.css — the floating microphone button and its transcript card.
+
+   Restores what app.html's own script-tag comment says was "removed,
+   cleanly" when this app was cloned from comart: [A]'s Exscriptor trigger,
+   by way of comart's mic.js/mic.css — the content-script version comart
+   draws on every page, bottom-right, asked for in these words: "I want the
+   same floating microphone icon button on all pages!" Ported path-for-path
+   (icons, states, drag, copy) — see mic.js's header for what changed and
+   why.
+
+   Unlike comart's copy, this page is not injected into someone else's site:
+   there is no foreign stylesheet to outrank (no !important), no unknown
+   background to read against (comart's halo is kept anyway — see .mic-btn —
+   since this app's own video posters/thumbnails can still sit behind the
+   button), and no browser page-zoom to cancel (comart's --cmtm-z). What's
+   kept is the 1.4x grow comart added for a button competing with someone
+   else's page furniture — asked-for, and what the screenshot everyone is
+   matching against actually shows — via the same technique comart used:
+   CSS `zoom` on the button, so every value below is [A]'s own number,
+   scaled together, and "make it bigger again" stays a one-line change. */
+
+.mic {
+  position: fixed;
+  /* Not comart's plain 16px: this app's own .player transport bar is a real,
+     always-present bottom bar (~50px tall, measured), unlike comart's own
+     quiet page — a plain 16px overlapped it by ~34px. Clears the bar's
+     current height plus its own 16px gap, with headroom for .ab-warn's
+     low-credit line (adds ~20px when shown) so the button doesn't drift back
+     over the bar the next time that appears. Still ONE fixed position,
+     never mid-interaction — see mic.js's header on why it doesn't track
+     .player's height live. */
+  bottom: 84px;
+  right: 16px;
+  /* Matches the slot app.html already reserved for it — see its z-index: 55
+     comment ("below the record button (60)"), left over from before this
+     feature was stripped. */
+  z-index: 60;
+  display: flex;
+  justify-content: flex-end;
+  pointer-events: none;      /* only the button itself is clickable */
+}
+
+.mic-btn {
+  --mic-grow: 1.4;
+  zoom: var(--mic-grow);
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px;               /* at rest: just a touch target around the bare glyph */
+  border: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--text-soft);
+  filter: drop-shadow(0 0 1.5px rgba(0, 0, 0, 0.85))
+          drop-shadow(0 1px 3px rgba(0, 0, 0, 0.5));
+  font: 600 14px/1 var(--sans);
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+  transition: transform .16s ease, background .16s ease, color .16s ease;
+}
+@media (hover: hover) {
+  .mic-btn:hover { color: var(--text); }
+}
+.mic-btn:active { transform: scale(0.9); }
+.mic-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mic-btn.mic-error { color: var(--rec); }
+
+/* Recording, or carrying a message: the bare glyph becomes a pill, anchored
+   right so it grows leftward — a timer/status line needs something to sit on. */
+.mic[data-state="recording"] .mic-btn,
+.mic[data-msg] .mic-btn {
+  padding: 6px 16px;
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
+  filter: none;
+}
+
+.mic-label {
+  display: none;
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+.mic[data-state="recording"] .mic-label,
+.mic[data-msg] .mic-label { display: inline; }
+
+.mic-ico { width: 24px; height: 24px; flex: none; display: block; }
+.mic-ico-stop { display: none; }
+
+/* Recording: the button reads red and the mic becomes a pulsing stop. */
+.mic[data-state="recording"] .mic-btn { color: var(--rec); }
+.mic[data-state="recording"] .mic-ico-mic { display: none; }
+.mic[data-state="recording"] .mic-ico-stop {
+  display: block;
+  animation: mic-blink 1.2s ease infinite;
+}
+@keyframes mic-blink { 50% { opacity: .3; } }
+
+/* Transcribing: dim, hide the icon, show a spinner in its place; the click is
+   ignored in JS. */
+.mic[data-state="transcribing"] .mic-btn { color: var(--text-2); cursor: progress; }
+.mic[data-state="transcribing"] .mic-ico { display: none; }
+.mic-spin {
+  display: none;
+  width: 17px;
+  height: 17px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid var(--hairline);
+  border-top-color: var(--accent);
+  animation: mic-spin .7s linear infinite;
+  box-sizing: border-box;
+}
+.mic[data-state="transcribing"] .mic-spin { display: block; }
+@keyframes mic-spin { to { transform: rotate(360deg); } }
+
+/* ---------- the transcript card ---------- */
+
+.mic-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.mic-modal[hidden] { display: none; }
+
+.mic-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transition: opacity .22s ease;
+}
+.mic-modal.mic-show .mic-backdrop { opacity: 1; }
+
+.mic-card {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 520px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transform: translateY(10px) scale(0.98);
+  transition: opacity .22s ease, transform .22s ease;
+}
+.mic-modal.mic-show .mic-card { opacity: 1; transform: none; }
+.mic-card.mic-dragging { transition: none; }
+
+.mic-drag {
+  flex: none;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+.mic-drag::before {
+  content: "";
+  width: 38px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--hairline);
+  transition: background .15s ease;
+}
+.mic-drag:hover::before { background: var(--text-2); }
+.mic-card.mic-dragging, .mic-card.mic-dragging .mic-drag { cursor: grabbing; }
+
+.mic-body { overflow-y: auto; padding: 2px 20px 14px; }
+
+.mic-text {
+  margin: 0;
+  font: 400 15px/1.55 var(--sans);
+  letter-spacing: -0.01em;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+  -webkit-user-select: text;
+  user-select: text;
+}
+.mic-text.mic-empty { color: var(--text-2); font-style: italic; }
+
+.mic-player { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+.mic-pp {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--hairline);
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background .15s ease, transform .12s ease;
+}
+.mic-pp:active { transform: scale(0.93); }
+.mic-ico-pp { width: 13px; height: 13px; display: block; }
+.mic-ico-play { margin-left: 2px; }
+.mic-ico-pause { display: none; }
+.mic-player.mic-playing .mic-ico-play { display: none; }
+.mic-player.mic-playing .mic-ico-pause { display: block; }
+.mic-track {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--hairline);
+  cursor: pointer;
+  overflow: hidden;
+}
+.mic-fill { height: 100%; width: 0; background: var(--accent); }
+.mic-time {
+  flex: none;
+  font: 400 11px/1.3 var(--sans);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+  min-width: 72px;
+  text-align: right;
+}
+
+.mic-actions { display: flex; justify-content: flex-end; margin-top: 8px; }
+.mic-copy {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  color: var(--accent);
+  background: none;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: opacity .15s ease, color .15s ease;
+}
+.mic-copy:hover { opacity: .7; }
+.mic-copy:active { opacity: .4; }
+.mic-copy svg { width: 17px; height: 17px; display: block; }
+.mic-copy .mic-ico-ck { display: none; }
+.mic-copy.mic-copied { color: #34c759; }
+.mic-copy.mic-copied .mic-ico-cp { display: none; }
+.mic-copy.mic-copied .mic-ico-ck { display: block; }
+.mic-copy[hidden] { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .mic[data-state="recording"] .mic-ico-stop { animation: none; }
+  .mic-card { transition: opacity .2s ease; transform: none; }
+}

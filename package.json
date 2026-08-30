@@ -29,6 +29,8 @@
       "app.html",
       "app-base.js",
       "app-listen.js",
+      "mic.css",
+      "mic.js",
       "*.woff2",
       "icon.svg",
       "build/icons/256x256.png"
@@ -36,7 +38,10 @@
     "mac": {
       "target": "dmg",
       "category": "public.app-category.utilities",
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Used by the microphone button to record short voice clips for transcription."
+      }
     },
     "linux": {
       "target": "deb",

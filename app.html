@@ -7,6 +7,10 @@
 <meta name="theme-color" content="#181818">
 <title>ComArt</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23211f1c'/%3E%3Cg fill='%23e7e5e0'%3E%3Crect x='10' y='10' width='19' height='19' rx='4.5'/%3E%3Crect x='35' y='10' width='19' height='19' rx='4.5'/%3E%3Crect x='10' y='35' width='19' height='19' rx='4.5'/%3E%3C/g%3E%3Crect x='35' y='35' width='19' height='19' rx='4.5' fill='%23ff6719'/%3E%3C/svg%3E">
+<!-- The floating microphone button — see mic.css/mic.js. Its own stylesheet
+     (not folded into the block below) so the diff against the removal this
+     app's clone once made stays a clean add, not an edit. -->
+<link rel="stylesheet" href="mic.css">
 <style>
   /* IPA glyphs (ə, ˈ, ˌ, ē …) render most reliably in Open Sans — used for the
      Merriam-Webster pronunciation badges in the Listen feature only. Served
@@ -1026,11 +1030,15 @@
 <script src="titlebar.js"></script>
 
 <!-- Cloned from comart's app.html (the Listen/audio-playback feature only —
-     Exscriptor's mic button, modal and CSS were removed, cleanly: app-listen.js
-     never depended on them). app-listen.js itself is untouched, line for line.
-     app-base.js FIRST: it is the one file here that is not [A]'s, and
-     app-listen.js reads it. -->
+     Exscriptor's mic button, modal and CSS were originally removed, cleanly:
+     app-listen.js never depended on them). app-listen.js itself is untouched,
+     line for line. app-base.js FIRST: it is the one file here that is not
+     [A]'s, and app-listen.js reads it. -->
 <script src="app-base.js"></script>
 <script src="app-listen.js"></script>
+<!-- The floating microphone button, restored from comart's mic.js — see its
+     own header for what changed in the port. Loaded last and depends only on
+     app-base.js's apiBase(); app-listen.js is untouched by its presence. -->
+<script src="mic.js"></script>
 </body>
 </html>

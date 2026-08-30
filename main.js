@@ -1,5 +1,15 @@
-const { app, BrowserWindow, nativeImage, ipcMain } = require("electron");
+const { app, BrowserWindow, nativeImage, ipcMain, session, systemPreferences } = require("electron");
 const path = require("node:path");
+
+// The transcript card (mic.js) plays its clip back the instant it opens, with
+// no click in between — the fetch() that transcribes it breaks the click's
+// user-activation window before play() ever runs. Chromium's default
+// autoplay policy would silently block that. This is a process-wide
+// Chromium flag (Electron has no narrower per-window/per-origin knob), so it
+// really does relax autoplay for anything this app ever loads — today that
+// blast radius happens to equal "the mic feature" only because app.html is
+// the one and only page this app loads at all.
+app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -87,6 +97,20 @@ app.whenReady().then(() => {
   if (process.platform === "darwin" && app.dock) {
     app.dock.setIcon(nativeImage.createFromPath(path.join(__dirname, "build", "icon.png")));
   }
+  if (process.platform === "darwin" && systemPreferences.getMediaAccessStatus("microphone") !== "granted") {
+    systemPreferences.askForMediaAccess("microphone");
+  }
+
+  // The mic button (mic.js) calls getUserMedia (permission "media") and, on
+  // a successful transcription, navigator.clipboard.writeText (permission
+  // "clipboard-sanitized-write" — Electron denies that too by default;
+  // measured, it throws NotAllowedError without this). There is no other
+  // origin this window ever loads, so granting both unconditionally is
+  // safe. session.defaultSession only exists once the app is ready, hence
+  // this lives in here rather than at module load time.
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
+    callback(permission === "media" || permission === "clipboard-sanitized-write");
+  });
 
   createWindow();
 

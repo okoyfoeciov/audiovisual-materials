@@ -51,6 +51,30 @@ app.all(EXPLAIN_PATHS, express.raw({ type: () => true, limit: "10mb" }), async (
   }
 });
 
+// The floating microphone button's transcription call (mic.js) — a single
+// short recording POSTed as a raw audio blob, proxied straight through to
+// comart's own /api/transcribe (same service backend/transcribe.js's chunked
+// long-file protocol talks to, different endpoint: this one is comart's
+// one-shot short-clip path, capped client-side at 60s). Raw body passthrough,
+// same shape as the EXPLAIN_PATHS proxy above, sized for a ~60s opus clip
+// (well under 1MB) with headroom.
+app.post("/api/transcribe", express.raw({ type: () => true, limit: "20mb" }), async (req, res) => {
+  try {
+    const upstream = await fetch(`${COMART_BASE}/api/transcribe`, {
+      method: "POST",
+      headers: req.get("Content-Type") ? { "Content-Type": req.get("Content-Type") } : {},
+      body: req.body,
+    });
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    res.status(upstream.status);
+    const ct = upstream.headers.get("content-type");
+    if (ct) res.setHeader("Content-Type", ct);
+    res.send(buf);
+  } catch {
+    res.status(502).json({ error: "Could not reach the transcription service." });
+  }
+});
+
 app.use(express.json());
 
 function toLibrarySummary(e) {
