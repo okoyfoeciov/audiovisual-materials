@@ -128,3 +128,65 @@ from `chrome.storage`, since this page has no origin exemption comart's
 extension gets). `main.js` is the Electron shell. Avoid changing
 `app-listen.js` unless the task requires it — keep adaptations isolated to
 `app-base.js`/`main.js` so the diff against comart's original stays legible.
+
+## Packaging & releases
+
+### Version + build
+
+1. Bump `version` in `package.json` — this project bumps the patch digit for
+   every release, feature or fix alike (`git log -p -- package.json` to see
+   the pattern). Commit that on its own.
+2. `npm run dist:linux` → `dist/audiovisual-materials_<version>_amd64.deb`.
+3. `npm run dist:mac` → `dist/Audiovisual Materials-<version>-mac.zip` — see
+   the gotcha below; as of this writing it only works on an actual Mac.
+
+### macOS build gotcha
+
+`build.mac.target` in `package.json` is `"dmg"`, but every release so far has
+shipped a plain `.zip`, never a `.dmg` — electron-builder produces the zip as
+an auto-update side-artifact even when the primary target is dmg.
+
+Building on Linux needs `dmg-license`, a macOS-only optional dependency
+(`"os": ["darwin"]` in `package-lock.json`) that a plain `npm install` prunes
+on any other platform — that alone fails the build with `Cannot find module
+'dmg-license'` before packaging even starts. Force-installing it —
+
+```
+npm install --no-save --force --os=darwin --cpu=x64 dmg-license
+```
+
+gets past that, but its own dependency `iconv-corefoundation` ships a
+**native Mach-O binary** (compiled for Darwin), which fails immediately on
+Linux with `invalid ELF header`. There is no further workaround short of
+building on an actual Mac, or setting up real cross-compilation tooling,
+which this project doesn't have. The v1.0.3 release shipped Linux-only for
+exactly this reason — check whether a later release restored the macOS
+artifact before assuming this is still broken.
+
+### Creating a GitHub release
+
+Releases are tagged `vX.Y.Z`, target `main`, and follow the same body shape
+every time: a short paragraph of what changed, then a `## Downloads` section
+listing the Linux `.deb` and macOS `.zip` (or noting one is missing, as
+above). No local git tag is created for these — GitHub creates the tag from
+`tag_name` when the release is created through the API.
+
+Per the remote-access rule at the top of this file, use `GH_TOKEN` from
+`.env` explicitly, not `gh auth` / the keyring:
+
+```bash
+GH_TOKEN="$(grep -m1 '^GH_TOKEN=' .env | cut -d= -f2-)"
+curl -sS -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+     https://api.github.com/repos/okoyfoeciov/audiovisual-materials/releases \
+     -d '{"tag_name":"vX.Y.Z","target_commitish":"main","name":"vX.Y.Z","body":"...","draft":false,"prerelease":false}'
+```
+
+Then upload each build artifact with `POST` to the `upload_url` the create
+call returned (`Content-Type: application/x-debian-package` for the `.deb`,
+`application/zip` for the mac zip):
+
+```bash
+curl -sS -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/x-debian-package" \
+     --data-binary @dist/audiovisual-materials_<version>_amd64.deb \
+     "https://uploads.github.com/repos/okoyfoeciov/audiovisual-materials/releases/<release_id>/assets?name=audiovisual-materials_<version>_amd64.deb"
+```
