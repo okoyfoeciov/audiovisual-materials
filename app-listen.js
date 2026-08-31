@@ -1834,7 +1834,10 @@
       startLoopWatch();
       return;
     }
-    paintPlay();
+    // Auto-replay: restart the whole track from the top instead of stopping.
+    // The muted <video> picture follows along on its own next sync tick.
+    seekTo(0);
+    const p = audioEl.play(); if (p && p.catch) p.catch(() => { paintPlay(); });
   });
   audioEl.addEventListener("timeupdate", paintTime);
   audioEl.addEventListener("loadedmetadata", paintTime);
