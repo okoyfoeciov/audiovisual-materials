@@ -1,6 +1,6 @@
 {
   "name": "audiovisual-materials",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Standalone desktop media-library player, backed by a local backend (backend/), clone of comart's Listen (audio playback) feature",
   "private": true,
   "main": "main.js",
@@ -29,6 +29,7 @@
       "app.html",
       "app-base.js",
       "app-listen.js",
+      "app-dictation.js",
       "mic.css",
       "mic.js",
       "*.woff2",

@@ -77,6 +77,109 @@ app.post("/api/transcribe", express.raw({ type: () => true, limit: "20mb" }), as
 
 app.use(express.json());
 
+// ---------------------------------------------------------------------------
+// Dictation — daily dictation sessions from PBS NewsHour (audio-only, 1-2
+// sentences per session, looped). See backend/dictation.js for the algorithm
+// and WER definition.
+// ---------------------------------------------------------------------------
+const dictation = require("./dictation");
+
+app.get("/api/dictation/stats", (req, res) => {
+  try {
+    const all = dictation.getAllSessionsDetailed();
+    const { set } = dictation.getCompletedSet();
+    res.json({
+      total: all.length,
+      completed: set.size,
+      remaining: Math.max(0, all.length - set.size),
+    });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+app.get("/api/dictation/session", (req, res) => {
+  try {
+    const pick = dictation.pickNextSession();
+    if (!pick || !pick.session) return res.status(404).json({ error: "No dictation sessions available." });
+    const s = pick.session;
+    const entry = db.getEntry(s.entryId);
+    res.json({
+      sessionId: s.sessionId,
+      entryId: s.entryId,
+      entryTitle: s.entryTitle,
+      hasVideo: !!(entry && entry.hasVideo),
+      start: s.start,
+      end: s.end,
+      duration: s.duration,
+      wordCount: s.wordCount,
+      // Reference text is intentionally included so the client can display it
+      // *after* checking — the grading itself is server-side on /api/dictation/check,
+      // so a client that peeks early gains nothing.
+      reference: s.text,
+      exhausted: pick.exhausted,
+      stats: { total: pick.total, remaining: pick.remaining },
+    });
+  } catch (e) {
+    console.error("dictation session error", e);
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+app.post("/api/dictation/check", (req, res) => {
+  const { sessionId, hypothesis } = req.body || {};
+  if (!sessionId || typeof hypothesis !== "string") {
+    return res.status(400).json({ error: "sessionId and hypothesis (string) required." });
+  }
+  try {
+    const session = dictation.getSessionById(sessionId);
+    if (!session) return res.status(404).json({ error: "Session not found." });
+    const reference = session.text;
+    const result = dictation.gradeDictation(reference, hypothesis);
+    res.json({
+      sessionId,
+      reference,
+      hypothesis,
+      score: result.score,
+      wer: result.wer,
+      accuracy: result.accuracy,
+      n: result.n,
+      S: result.S,
+      D: result.D,
+      I: result.I,
+      C: result.C,
+      dist: result.dist,
+      refTokens: result.refTokens,
+      hypTokens: result.hypTokens,
+      ops: result.ops,
+    });
+  } catch (e) {
+    console.error("dictation check error", e);
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+app.post("/api/dictation/complete", (req, res) => {
+  const { sessionId, score } = req.body || {};
+  if (!sessionId) return res.status(400).json({ error: "sessionId required." });
+  try {
+    const session = dictation.getSessionById(sessionId);
+    if (!session) return res.status(404).json({ error: "Session not found." });
+    const ok = dictation.markCompleted(sessionId, session.entryId, {
+      wordStart: session.wordStart,
+      wordEnd: session.wordEnd,
+      text: session.text,
+      start: session.start,
+      end: session.end,
+      score: typeof score === "number" ? score : null,
+    });
+    res.json({ ok, alreadyCompleted: !ok });
+  } catch (e) {
+    console.error("dictation complete error", e);
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
 function toLibrarySummary(e) {
   return {
     id: e.id,
