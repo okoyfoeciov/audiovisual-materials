@@ -224,10 +224,12 @@
     if (!audioEl.src || audioEl.paused || audioEl.error) return;
     const pos = audioEl.currentTime || 0;
     if (pos >= dLoopEnd - 0.02) {
-      // Auto-loop disabled: play the segment once then pause at the end
-      // instead of seeking back to the start. User must press Replay.
+      // Auto-loop disabled: play once then pause and reset to start for
+      // next manual play. Previous code left playhead at dLoopEnd, so the
+      // next click on Play immediately hit this condition again and appeared
+      // to "switch off" instantly.
       try { audioEl.pause(); } catch {}
-      try { audioEl.currentTime = dLoopEnd; } catch {}
+      try { audioEl.currentTime = Math.max(0, dLoopStart - D_LOOP_LEAD_IN); } catch {}
       return;
     }
     dLoopRAF = requestAnimationFrame(dictLoopTick);
