@@ -222,11 +222,13 @@
     dLoopRAF = null;
     if (dLoopStart == null || dLoopEnd == null) return;
     if (!audioEl.src || audioEl.paused || audioEl.error) return;
-    // Use a slightly lower threshold so the tail completes before seeking.
     const pos = audioEl.currentTime || 0;
     if (pos >= dLoopEnd - 0.02) {
-      const target = Math.max(0, dLoopStart - D_LOOP_LEAD_IN);
-      try { audioEl.currentTime = target; } catch {}
+      // Auto-loop disabled: play the segment once then pause at the end
+      // instead of seeking back to the start. User must press Replay.
+      try { audioEl.pause(); } catch {}
+      try { audioEl.currentTime = dLoopEnd; } catch {}
+      return;
     }
     dLoopRAF = requestAnimationFrame(dictLoopTick);
   }
@@ -286,24 +288,17 @@
     if (playerEl) playerEl.hidden = false;
   }
 
-  // Keep dictation loop alive across play/pause/seek.
+  // Dictation segment monitor — play once then pause at segment end
+  // (auto-loop disabled). Keep monitoring on play/seeked so we stop
+  // precisely at dLoopEnd; do NOT restart on 'ended'.
   if (audioEl) {
     audioEl.addEventListener("play", () => { if (currentFeature === FEATURE_DICTATION && dLoopStart != null) startDictLoop(); });
-    // When the clip naturally hits 'ended' (rare, since we loop before end) —
-    // restart the loop.
     audioEl.addEventListener("ended", () => {
       if (currentFeature !== FEATURE_DICTATION || dLoopStart == null) return;
-      try { audioEl.currentTime = Math.max(0, dLoopStart - D_LOOP_LEAD_IN); } catch {}
-      const p = audioEl.play(); if (p && p.catch) p.catch(() => {});
-      startDictLoop();
+      stopDictLoop();
     });
-    // A user seek (track click / arrow keys) that lands outside the loop:
-    // let it play from there, but the rAF will pull it back once it crosses dLoopEnd.
     audioEl.addEventListener("seeked", () => {
       if (currentFeature !== FEATURE_DICTATION || dLoopStart == null) return;
-      // If they sought before the loop, gently nudge forward? No — let them
-      // scout the surrounding context. The loop resumes when they cross the end.
-      // Just ensure the watcher is running.
       if (!audioEl.paused) startDictLoop();
     });
   }
