@@ -6,6 +6,19 @@
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#181818">
 <title>ComArt</title>
+<script>
+  // Early macOS detection so the first paint already clears the traffic lights.
+  // titlebar.js also sets this class as a fallback once window.electronWindow is certain.
+  (function () {
+    try {
+      var p = window.electronWindow && window.electronWindow.platform;
+      if (p === "darwin") document.documentElement.classList.add("is-darwin");
+      else if (!p && typeof navigator !== "undefined" && /Mac/.test(navigator.platform || navigator.userAgent || "")) {
+        document.documentElement.classList.add("is-darwin");
+      }
+    } catch {}
+  })();
+</script>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23211f1c'/%3E%3Cg fill='%23e7e5e0'%3E%3Crect x='10' y='10' width='19' height='19' rx='4.5'/%3E%3Crect x='35' y='10' width='19' height='19' rx='4.5'/%3E%3Crect x='10' y='35' width='19' height='19' rx='4.5'/%3E%3C/g%3E%3Crect x='35' y='35' width='19' height='19' rx='4.5' fill='%23ff6719'/%3E%3C/svg%3E">
 <!-- The floating microphone button — see mic.css/mic.js. Its own stylesheet
      (not folded into the block below) so the diff against the removal this
@@ -946,6 +959,50 @@
   }
   .feature-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
+  /* macOS hiddenInset: traffic lights at 16,16 sit over the content. Push the
+     tabs clear of them and make the gap draggable; buttons stay clickable. */
+  html.is-darwin .feature-tabs {
+    left: 80px;
+    -webkit-app-region: drag;
+  }
+  html.is-darwin .feature-tab {
+    -webkit-app-region: no-drag;
+  }
+  html.is-darwin .lib-list-back {
+    -webkit-app-region: no-drag;
+  }
+  /* make the empty strip above the tabs draggable so the window can be moved
+     by grabbing the title-bar area (hiddenInset has no native title bar row) */
+  html.is-darwin .explain-band::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 38px;
+    -webkit-app-region: drag;
+    z-index: 4;
+    pointer-events: auto;
+  }
+  html.is-darwin .library-view,
+  html.is-darwin .dictation-view,
+  html.is-darwin .video-window {
+    /* keep interactive content above the drag strip */
+    position: relative;
+    z-index: 5;
+  }
+  html.is-darwin .feature-tabs { z-index: 5; }
+  html.is-darwin .lib-list-back { z-index: 5; }
+  /* Tabs and the nested-view back button both float at 10,32 — without help
+     they sit on top of each other. When the back button is present, slide it
+     to the right of the tabs so both stay legible. */
+  .explain-band:has(.lib-list-back) .lib-list-back {
+    left: 250px;
+  }
+  html.is-darwin .explain-band:has(.lib-list-back) .lib-list-back {
+    left: 300px;
+  }
+
   /* ======================================================================
      Dictation — audio-only notepad that replaces the video stage.
      Same order/flex as .library-view / .video-window so they are
@@ -1131,8 +1188,11 @@
   body.dictation-on .library-view { display: none !important; }
   @media (max-width: 760px) {
     .feature-tabs { left: 16px; top: calc(10px + env(safe-area-inset-top)); }
+    html.is-darwin .feature-tabs { left: 80px; }
     .dictation-view { padding-left: 16px; padding-right: 16px; }
     .dictation-textarea { font-size: 16px; min-height: 120px; }
+    .explain-band:has(.lib-list-back) .lib-list-back { left: 180px; }
+    html.is-darwin .explain-band:has(.lib-list-back) .lib-list-back { left: 200px; }
   }
 </style>
 </head>

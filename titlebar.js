@@ -8,7 +8,11 @@
   "use strict";
 
   const api = window.electronWindow;
-  if (!api || api.platform === "darwin") return;
+  if (!api) return;
+  if (api.platform === "darwin") {
+    document.documentElement.classList.add("is-darwin");
+    return;
+  }
 
   const bar = document.getElementById("electron-titlebar");
   const maxBtn = document.getElementById("electron-titlebar-max");
