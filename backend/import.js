@@ -19,7 +19,7 @@ const fs = require("fs");
 const path = require("path");
 const { execFileSync } = require("child_process");
 const db = require("./db");
-const { transcribe, sha256File } = require("./transcribe");
+const { transcribe, transcribeVerbatim, sha256File } = require("./transcribe");
 const { fetchPoster } = require("./poster");
 
 function slugify(title) {
@@ -60,7 +60,7 @@ async function createCollection({ title, id, parentId } = {}) {
   });
 }
 
-async function importMedia({ sourcePath, type, title, id, parentId } = {}) {
+async function importMedia({ sourcePath, type, title, id, parentId, verbatim = false } = {}) {
   if (!sourcePath || !["movie", "audio", "podcast"].includes(type) || !title) {
     throw new Error("importMedia requires sourcePath, type (movie|audio|podcast), and title");
   }
@@ -114,9 +114,10 @@ async function importMedia({ sourcePath, type, title, id, parentId } = {}) {
   const transcriptPath = path.join(destDir, "transcript.json");
   db.upsertEntry({ id: slug, transcriptStatus: "processing", transcriptPath });
 
-  console.log("Starting transcription (this can take a while for large files)...");
+  console.log(`Starting transcription (${verbatim ? "verbatim Crisper 8789" : "clean Parakeet 8790"} — this can take a while for large files)...`);
   try {
-    const transcript = await transcribe(destPath, {
+    const fn = verbatim ? transcribeVerbatim : transcribe;
+    const transcript = await fn(destPath, {
       sha256,
       onProgress: (msg) => console.log(`  [transcribe] ${msg}`),
     });
@@ -133,7 +134,7 @@ async function importMedia({ sourcePath, type, title, id, parentId } = {}) {
 
 const USAGE =
   'Usage:\n' +
-  '  node backend/import.js <sourcePath> --type=<movie|audio|podcast> --title="<title>" [--parent=<collectionId>]\n' +
+  '  node backend/import.js <sourcePath> --type=<movie|audio|podcast> --title="<title>" [--parent=<collectionId>] [--verbatim]\n' +
   '  node backend/import.js --collection --title="<title>" [--id=<slug>] [--parent=<collectionId>]';
 
 function parseArgs(argv) {
@@ -176,7 +177,7 @@ async function main() {
   }
 
   try {
-    await importMedia({ sourcePath, type, title, parentId: args.parent });
+    await importMedia({ sourcePath, type, title, parentId: args.parent, verbatim: !!args.verbatim });
   } catch (err) {
     console.error(err.message);
     process.exitCode = 1;

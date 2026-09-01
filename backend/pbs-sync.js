@@ -228,7 +228,9 @@ async function sync({ dryRun = false } = {}) {
       console.log(`Downloading "${seg.title}" (${seg.url}) ...`);
       const { dir, filePath } = downloadWithYtDlp(seg.url, seg.videoId);
       try {
-        const entry = await importMedia({ sourcePath: filePath, type: "movie", title: seg.title, parentId: dayId });
+        // PBS dictation segments use verbatim Crisper (keeps you know) so
+        // Watch stays clean via Parakeet while dictation is scored verbatim.
+        const entry = await importMedia({ sourcePath: filePath, type: "movie", title: seg.title, parentId: dayId, verbatim: true });
         db.upsertEntry({ id: entry.id, sourceId: seg.videoId });
         try {
           await downloadYoutubeThumbnail(seg.videoId, path.join(entry.dir, "poster.jpg"));

@@ -19,6 +19,14 @@ const TX_QUEUED_LIMIT = 3600;    // ~4 h queued — matches the service's queue 
 // This machine already is nuc-15-pro on the tailnet — comart runs locally.
 const COMART_BASE = "http://127.0.0.1:8770";
 
+// Daily dictation uses CrisperWhisper2.0 medium verbatim (keeps you know, um)
+// on 8789 directly (same token) so Watch stays clean (Parakeet 8790) while
+// dictation is verbatim. See pbs-sync retranscribe 2026-09-01.
+const CRISPER_URL = process.env.CRISPER_URL || "http://127.0.0.1:8789";
+const CRISPER_TOKEN = process.env.CRISPER_TOKEN || (() => {
+  try { return require("fs").readFileSync("/home/james/crisper-whisper/service.env","utf8").match(/PARAKEET_TOKEN=(.*)/)[1].trim(); } catch { return process.env.PARAKEET_TOKEN || ""; }
+})();
+
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -64,10 +72,9 @@ async function readChunk(fd, start, len) {
   return buf;
 }
 
-// Transcribes a file already on disk. Returns {lines, words}. Calls
-// onProgress(message) as it goes, since a multi-GB upload can take a while.
-// Pass a precomputed `sha256` if the caller already hashed the file (e.g. for
-// its own DB record) to avoid hashing a multi-GB file twice.
+// Transcribes a file already on disk via comart -> Parakeet (clean).
+// For verbatim dictation, use transcribeVerbatim() which hits Crisper 8789 directly.
+// Returns {lines, words}. Calls onProgress(message) as it goes.
 async function transcribe(filePath, { onProgress = () => {}, sha256 } = {}) {
   const size = statSync(filePath).size;
   if (size > TX_MAX) throw new Error("File is too large to transcribe (over 2 GB).");
@@ -149,4 +156,68 @@ async function transcribe(filePath, { onProgress = () => {}, sha256 } = {}) {
   return { lines: t.lines, words: Array.isArray(t.words) ? t.words : [] };
 }
 
-module.exports = { transcribe, sha256File };
+// Verbatim variant for daily dictation — hits CrisperWhisper2.0 medium on
+// 8789 directly (same bearer token) instead of comart/Parakeet. Same chunked
+// protocol, same polling, but no comart cache. Used by pbs-sync for PBS
+// segments so you know is kept for scoring while Watch stays clean.
+async function transcribeVerbatim(filePath, { onProgress = () => {}, sha256 } = {}) {
+  const size = statSync(filePath).size;
+  if (size > TX_MAX) throw new Error("File is too large to transcribe (over 2 GB).");
+  if (!CRISPER_TOKEN) throw new Error("CRISPER_TOKEN/PARAKEET_TOKEN not configured for verbatim transcription.");
+  if (!sha256) {
+    onProgress("hashing file...");
+    sha256 = await sha256File(filePath);
+  }
+  // Direct Crisper: single-shot POST /v1/jobs (multipart) is simpler than
+  // chunked for PBS clips (<100MB) and avoids comart's transcript cache.
+  // For larger files we could reuse chunked, but PBS segments are small.
+  onProgress("uploading to Crisper (verbatim)...");
+  const buf = await fs.readFile(filePath);
+  const form = new FormData();
+  form.append("file", new Blob([buf]), require("path").basename(filePath));
+  let data = await (async () => {
+    const res = await fetch(`${CRISPER_URL}/v1/jobs`, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${CRISPER_TOKEN}` },
+      body: form,
+    });
+    let j = null; try { j = await res.json(); } catch {}
+    if (!res.ok) {
+      const err = new Error(j?.error || `Crisper POST ${res.status}`);
+      err.status = res.status;
+      throw err;
+    }
+    return j;
+  })();
+  const jobId = data.job_id;
+  if (!jobId) throw new Error("Crisper did not return a job_id");
+  onProgress("waiting for verbatim transcription...");
+  let fails = 0, processing = 0, queued = 0;
+  for (;;) {
+    await sleep(TX_POLL_MS);
+    try {
+      const r = await fetch(`${CRISPER_URL}/v1/jobs/${jobId}`, {
+        headers: { "Authorization": `Bearer ${CRISPER_TOKEN}` },
+      });
+      let j = null; try { j = await r.json(); } catch {}
+      if (!r.ok) {
+        const err = new Error(j?.error || `Crisper status ${r.status}`);
+        err.status = r.status;
+        throw err;
+      }
+      fails = 0;
+      if (j.status === "error") throw new Error(j.error || "Crisper job error");
+      if (j.status === "done") {
+        if (!j.result || !j.result.lines) throw new Error("Crisper returned no transcript");
+        return { lines: j.result.lines, words: j.result.words || [] };
+      }
+      if (j.status === "processing" && ++processing >= TX_PROCESSING_LIMIT) throw new Error("Verbatim transcription timed out.");
+      if (j.status === "queued" && ++queued >= TX_QUEUED_LIMIT) throw new Error("Crisper queue overloaded — try again later.");
+      onProgress(`status: ${j.status}...`);
+    } catch (e) {
+      if (e.status === 404 || !retryable(e) || ++fails >= 5) throw e;
+    }
+  }
+}
+
+module.exports = { transcribe, transcribeVerbatim, sha256File };
