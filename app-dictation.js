@@ -93,8 +93,8 @@
       // Pause any Watch playback that was in progress? No — keep the same <audio>
       // but the dictation loop will take over when a session is loaded.
       refreshDictationView();
-      if (!currentSession) loadNextSession();
-      else ensureDictationAudio();
+      if (!currentSession) loadNextSession({ autoplay: false });
+      else ensureDictationAudio({ autoplay: false });
     } else {
       // Leaving dictation: stop its loop, but keep its session in memory so
       // returning is instant (re-press Dictation to resume same clip).
@@ -165,7 +165,7 @@
     dictMetaEl.hidden = false;
   }
 
-  async function loadNextSession() {
+  async function loadNextSession({ autoplay = true } = {}) {
     dictStatsEl.textContent = "Picking next session…";
     dictCheckBtn.disabled = true;
     dictNextBtn.disabled = true;
@@ -204,7 +204,7 @@
       showDictReady();
       dictCheckBtn.disabled = false;
       dictNextBtn.disabled = false;
-      await ensureDictationAudio();
+      await ensureDictationAudio({ autoplay });
       dictStatsEl.textContent = data.exhausted ? "All sessions completed — recycling" : "";
       // still refresh full stats in background
       refreshDictationView();
@@ -242,7 +242,7 @@
     dLoopRAF = requestAnimationFrame(dictLoopTick);
   }
 
-  async function ensureDictationAudio() {
+  async function ensureDictationAudio({ autoplay = true } = {}) {
     if (!currentSession) return;
     const src = apiBase() + "/api/library/" + encodeURIComponent(currentSession.entryId) + "/stream";
     const dStart = currentSession.start;
@@ -259,10 +259,13 @@
     if (sameEntry && audioEl.src) {
       try { audioEl.currentTime = Math.max(0, dStart - D_LOOP_LEAD_IN); } catch {}
       if (currentFeature === FEATURE_DICTATION) startDictLoop();
-      // Autoplay the loop so the user hears it immediately
-      if (audioEl.paused) {
-        const p = audioEl.play();
-        if (p && p.catch) p.catch(() => {});
+      if (autoplay) {
+        if (audioEl.paused) {
+          const p = audioEl.play();
+          if (p && p.catch) p.catch(() => {});
+        }
+      } else {
+        try { audioEl.pause(); } catch {}
       }
       return;
     }
@@ -276,8 +279,10 @@
     const seekToLoop = () => {
       try { audioEl.currentTime = Math.max(0, dStart - D_LOOP_LEAD_IN); } catch {}
       if (currentFeature === FEATURE_DICTATION) startDictLoop();
-      const p = audioEl.play();
-      if (p && p.catch) p.catch(() => {});
+      if (autoplay) {
+        const p = audioEl.play();
+        if (p && p.catch) p.catch(() => {});
+      }
       audioEl.removeEventListener("loadedmetadata", seekToLoop);
     };
     if (audioEl.readyState >= 1) seekToLoop();

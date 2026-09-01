@@ -961,10 +961,10 @@
 
   /* macOS hiddenInset: traffic lights at 16,16 sit over the content. Place the
      tabs *under* the lights (not aside) — a new row below the 38px title-bar
-     strip. Buttons themselves stay clickable (no-drag). */
+     strip with breathing room. Buttons themselves stay clickable (no-drag). */
   html.is-darwin .feature-tabs {
     left: 16px;
-    top: 38px;
+    top: 52px;
   }
   html.is-darwin .lib-list-back {
     -webkit-app-region: no-drag;
@@ -1003,7 +1003,7 @@
     left: 80px;
   }
   html.is-darwin .explain-band {
-    padding-top: 78px;
+    padding-top: 92px;
   }
   html.is-darwin body.video-on .explain-band {
     padding-top: 0;
@@ -1194,7 +1194,7 @@
   body.dictation-on .library-view { display: none !important; }
   @media (max-width: 760px) {
     .feature-tabs { left: 16px; top: calc(10px + env(safe-area-inset-top)); }
-    html.is-darwin .feature-tabs { left: 16px; top: calc(38px + env(safe-area-inset-top)); }
+    html.is-darwin .feature-tabs { left: 16px; top: calc(52px + env(safe-area-inset-top)); }
     .dictation-view { padding-left: 16px; padding-right: 16px; }
     .dictation-textarea { font-size: 16px; min-height: 120px; }
     .explain-band:has(.lib-list-back) .lib-list-back { left: 180px; }
