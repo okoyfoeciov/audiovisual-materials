@@ -1,8 +1,10 @@
 // titlebar.js — Electron-shell-only, like main.js/preload.js. Wires up the
-// custom title bar in app.html for Linux/Windows (main.js goes frame:false
-// there and exposes window.electronWindow via preload.js). macOS instead uses
-// a native hiddenInset title bar with real traffic lights and never runs the
-// branch below, so the bar stays hidden and nothing here fires.
+// custom title bar in app.html for Linux/Windows/macOS (main.js goes
+// frame:false on all platforms and exposes window.electronWindow via
+// preload.js). Previously macOS used a native hiddenInset bar and never ran
+// this branch; per feedback it now uses the same custom right-side bar as
+// Linux, so the branch runs on darwin too (we still tag the root for any
+// future darwin-only tweaks).
 
 (() => {
   "use strict";
@@ -11,7 +13,6 @@
   if (!api) return;
   if (api.platform === "darwin") {
     document.documentElement.classList.add("is-darwin");
-    return;
   }
 
   const bar = document.getElementById("electron-titlebar");

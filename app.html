@@ -882,10 +882,11 @@
   }
 
   /* ======================================================================
-     Custom title bar — Linux/Windows only (see titlebar.js). macOS uses a
-     native hiddenInset title bar with real traffic lights instead (main.js)
-     and never shows this. Kept visually as quiet as possible: no separate
-     surface colour, just a hairline to close off the content below.
+     Custom title bar — all platforms (see titlebar.js). Frameless window
+     with the same right-aligned min/max/close as Linux — previously
+     Linux/Windows only, now macOS too (no more hiddenInset traffic lights).
+     Kept visually as quiet as possible: no separate surface colour, just a
+     hairline to close off the content below.
      ====================================================================== */
   .electron-titlebar {
     flex: 0 0 auto;
@@ -959,54 +960,12 @@
   }
   .feature-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-  /* macOS hiddenInset: traffic lights at 16,16 sit over the content. Place the
-     tabs *under* the lights (not aside) — a new row below the 38px title-bar
-     strip with breathing room. Buttons themselves stay clickable (no-drag). */
-  html.is-darwin .feature-tabs {
-    left: 16px;
-    top: 52px;
-  }
-  html.is-darwin .lib-list-back {
-    -webkit-app-region: no-drag;
-  }
-  /* make the empty title-bar strip draggable so the window can be moved
-     by grabbing the area around the traffic lights (hiddenInset has no
-     native title-bar row) */
-  html.is-darwin .explain-band::before {
-    content: "";
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 38px;
-    -webkit-app-region: drag;
-    z-index: 4;
-    pointer-events: auto;
-  }
-  html.is-darwin .library-view,
-  html.is-darwin .dictation-view,
-  html.is-darwin .video-window {
-    /* keep interactive content above the drag strip */
-    position: relative;
-    z-index: 5;
-  }
-  html.is-darwin .feature-tabs { z-index: 5; }
-  html.is-darwin .lib-list-back { z-index: 5; }
-  /* Linux/Windows: tabs and the nested-view back button both float at 10,32 —
-     without help they sit on top of each other. When the back button is
-     present, slide it to the right of the tabs so both stay legible.
-     On macOS the tabs are *under* the lights (top 38), so no overlap. */
+  /* Tabs and the nested-view back button both float at 10,32 — without help
+     they sit on top of each other. When the back button is present, slide it
+     to the right of the tabs so both stay legible. Applies to all platforms
+     now that macOS uses the same frameless custom title bar as Linux. */
   .explain-band:has(.lib-list-back) .lib-list-back {
     left: 250px;
-  }
-  html.is-darwin .lib-list-back {
-    left: 80px;
-  }
-  html.is-darwin .explain-band {
-    padding-top: 92px;
-  }
-  html.is-darwin body.video-on .explain-band {
-    padding-top: 0;
   }
 
   /* ======================================================================
@@ -1194,7 +1153,6 @@
   body.dictation-on .library-view { display: none !important; }
   @media (max-width: 760px) {
     .feature-tabs { left: 16px; top: calc(10px + env(safe-area-inset-top)); }
-    html.is-darwin .feature-tabs { left: 16px; top: calc(52px + env(safe-area-inset-top)); }
     .dictation-view { padding-left: 16px; padding-right: 16px; }
     .dictation-textarea { font-size: 16px; min-height: 120px; }
     .explain-band:has(.lib-list-back) .lib-list-back { left: 180px; }
@@ -1202,9 +1160,9 @@
 </style>
 </head>
 <body class="player-collapsed">
-  <!-- Custom title bar — Linux/Windows only. Shown and wired up by titlebar.js
-       once it confirms window.electronWindow.platform isn't "darwin"; stays
-       hidden on macOS, which uses native inset traffic lights instead. -->
+  <!-- Custom title bar — all platforms (frameless). Shown and wired up by
+       titlebar.js — previously Linux/Windows only, now macOS too (no more
+       native traffic lights). -->
   <div class="electron-titlebar" id="electron-titlebar" hidden>
     <div class="electron-titlebar-controls">
       <button class="electron-titlebar-btn" id="electron-titlebar-min" type="button" aria-label="Minimize">

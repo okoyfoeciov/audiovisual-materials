@@ -22,14 +22,13 @@ function createWindow() {
     backgroundColor: "#181818", // matches app.html's <meta name="theme-color">
     show: false,
     // The app has no header of its own to sit under a native title-bar row,
-    // so a native one is just a bare strip over black content. macOS insets
-    // real traffic lights straight onto the dark background instead — no
-    // row, no title text. Linux (and Windows) have no equivalent "inset"
-    // chrome, so those go fully frameless and get a matching custom bar of
-    // our own — see titlebar.js/preload.js.
-    ...(process.platform === "darwin"
-      ? { titleBarStyle: "hiddenInset", trafficLightPosition: { x: 16, y: 16 } }
-      : { frame: false }),
+    // so a native one is just a bare strip over black content. Previously
+    // macOS inset real traffic lights straight onto the dark background
+    // (hiddenInset) while Linux/Windows went fully frameless with a custom
+    // bar of our own (see titlebar.js/preload.js). Per feedback the macOS
+    // build now looks exactly like Linux — frameless with the same custom
+    // right-side controls — so hiddenInset is no longer used on any platform.
+    frame: false,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
