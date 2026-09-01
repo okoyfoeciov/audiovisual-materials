@@ -167,7 +167,7 @@
 
   /* The single explanation panel (R1). Anchored to the bottom of the band
      (nearest the caption) at a draggable height (--panel-h); the space above is
-     empty. It scrolls its own text rather than growing to fit content. */
+     empty. */
   .explain-panel {
     flex: 0 0 var(--panel-h, 60vh);
     min-height: 0;
@@ -175,6 +175,15 @@
     display: flex;
     flex-direction: column;
     border-top: 1px solid var(--border);
+  }
+  .dictation-ref-panel {
+    flex: 0 0 auto;
+    min-height: 0;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid var(--border);
+    order: 1;
   }
 
   /* Resize handle on the panel's top edge — drag up/down to change its height.
@@ -489,17 +498,17 @@
   }
   .explain-content .round p { margin: 0 0 10px; }
   .explain-content .round p:last-child { margin-bottom: 0; }
-  .explain-content strong { font-weight: 600; color: var(--text); }
-  .explain-content em { color: var(--text-soft); font-style: italic; }
-  .explain-content blockquote {
+  .explain-content strong, .dictation-ref-scroll strong { font-weight: 600; color: var(--text); }
+  .explain-content em, .dictation-ref-scroll em { color: var(--text-soft); font-style: italic; }
+  .explain-content blockquote, .dictation-ref-scroll blockquote {
     margin: 4px 0 10px;
     padding: 2px 0 2px 14px;
     border-left: 2px solid var(--border);
     color: var(--text-soft);
     font-size: 0.95em;
   }
-  .explain-content blockquote strong { color: var(--text); }
-  .explain-content .err { color: var(--err); font-weight: 500; }
+  .explain-content blockquote strong, .dictation-ref-scroll blockquote strong { color: var(--text); }
+  .explain-content .err, .dictation-ref-scroll .err { color: var(--err); font-weight: 500; }
 
   .response-word { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
   .round-block.divided {
@@ -1149,6 +1158,61 @@
     transition: background 0.12s ease;
   }
   .dictation-ref .dictation-ref-word:hover { background: var(--word-hover, rgba(255,255,255,0.08)); }
+  /* Reference panel — anchored directly above the player, mirroring the
+     Watch tab's explanation panel (order 1, same --panel-h, same resize
+     handle). This is the "right up next" position of the audio playback:
+     the band's bottom-most item, nearest the caption/player. Identical to
+     .explain-panel in every property so height, spacing, font, weight
+     match pixel-for-pixel. */
+  .dictation-ref-panel {
+    flex: 0 0 var(--panel-h, 60vh);
+    min-height: 0;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid var(--border);
+    order: 1;
+  }
+  .dictation-ref-panel[hidden] { display: none; }
+  body:not(.dictation-on) .dictation-ref-panel { display: none !important; }
+  .dictation-ref-scroll {
+    flex: 0 0 auto;
+    min-height: 0;
+    width: 100%;
+    max-height: 38vh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 20px 16px;
+    font-family: var(--serif);
+    font-size: 15.5px;
+    line-height: 1.65;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .dictation-ref-scroll::-webkit-scrollbar { width: 10px; }
+  .dictation-ref-scroll::-webkit-scrollbar-thumb {
+    background: var(--border);
+    background-clip: padding-box;
+    border: 3px solid transparent;
+    border-radius: 999px;
+  }
+  /* When inside the anchored panel the reference loses its card chrome
+     and reads as plain panel content, mirroring .explain-content. */
+  .dictation-ref-panel .dictation-ref {
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    font-family: inherit;
+    font-size: inherit;
+    line-height: inherit;
+    font-weight: inherit;
+    color: inherit;
+  }
+  .dictation-ref-panel .dictation-ref p {
+    margin: 0 0 10px;
+  }
+  .dictation-ref-panel .dictation-ref p:last-child { margin-bottom: 0; }
   .dictation-empty {
     padding: 40px 20px;
     text-align: center;
@@ -1168,6 +1232,20 @@
     .dictation-view { padding-left: 16px; padding-right: 16px; }
     .dictation-textarea { font-size: 16px; min-height: 120px; }
     .explain-band:has(.lib-list-back) .lib-list-back { left: 180px; }
+    .dictation-ref-panel {
+      position: sticky;
+      bottom: var(--player-h, 130px);
+      z-index: 10;
+      background: color-mix(in srgb, var(--bg) 55%, var(--surface));
+    }
+    .dictation-ref-panel .panel-resize { top: -10px; height: 22px; }
+    .dictation-ref-panel .panel-resize::after {
+      opacity: 0.5;
+      left: 50%; right: auto;
+      width: 40px; height: 4px;
+      border-radius: 2px;
+      transform: translate(-50%, -50%);
+    }
   }
 </style>
 </head>
@@ -1235,11 +1313,20 @@
           </span>
         </div>
         <div class="dictation-result" id="dictation-result" hidden></div>
-        <div class="dictation-ref" id="dictation-ref" hidden></div>
       </div>
       <div class="dictation-empty" id="dictation-empty" hidden>
         <p id="dictation-empty-msg">No dictation sessions available.</p>
         <button class="dictation-btn primary" id="dictation-retry" type="button">Retry</button>
+      </div>
+    </div>
+
+    <!-- Dictation Reference panel — anchored directly above the player,
+         mirroring the Watch tab's explanation panel position (order 1,
+         same --panel-h drag handle). Right up next to the audio playback. -->
+    <div class="dictation-ref-panel" id="dictation-ref-panel" hidden>
+      <div class="panel-resize" id="dictation-ref-resize" role="separator" aria-orientation="horizontal" aria-label="Resize reference panel" tabindex="0"></div>
+      <div class="dictation-ref-scroll" id="dictation-ref-scroll">
+        <div class="dictation-ref" id="dictation-ref" hidden></div>
       </div>
     </div>
 

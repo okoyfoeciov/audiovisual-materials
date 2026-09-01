@@ -32,6 +32,9 @@
   const dictDetailEl = document.getElementById("dictation-detail");
   const dictResultEl = document.getElementById("dictation-result");
   const dictRefEl = document.getElementById("dictation-ref");
+  const dictRefPanel = document.getElementById("dictation-ref-panel");
+  const dictRefResize = document.getElementById("dictation-ref-resize");
+  const dictRefScroll = document.getElementById("dictation-ref-scroll");
   const dictEmptyEl = document.getElementById("dictation-empty");
   const dictEmptyMsg = document.getElementById("dictation-empty-msg");
   const dictRetryBtn = document.getElementById("dictation-retry");
@@ -70,7 +73,7 @@
   function renderDictationReference(reference) {
     const text = String(reference || "");
     const re = new RegExp(DICT_WORD_RE.source, DICT_WORD_RE.flags);
-    let html = '<strong>Reference:</strong> ';
+    let html = '';
     let last = 0, m;
     while ((m = re.exec(text)) !== null) {
       if (m.index > last) html += escapeHtml(text.slice(last, m.index));
@@ -79,7 +82,7 @@
       last = re.lastIndex;
     }
     if (last < text.length) html += escapeHtml(text.slice(last));
-    return html;
+    return `<p>${html}</p>`;
   }
 
   // ---------------------------------------------------------------------------
@@ -172,14 +175,26 @@
     dictMetaEl.hidden = false;
   }
 
+  function hideDictRef() {
+    if (dictRefEl) { dictRefEl.hidden = true; dictRefEl.innerHTML = ""; }
+    if (dictRefPanel) dictRefPanel.hidden = true;
+    if (dictRefScroll) dictRefScroll.scrollTop = 0;
+  }
+  function showDictRef() {
+    if (dictRefEl) dictRefEl.hidden = false;
+    if (dictRefPanel) dictRefPanel.hidden = false;
+    // Scroll the panel's content to top and bring panel into view
+    if (dictRefPanel) dictRefPanel.scrollIntoView({ block: "nearest" });
+    if (dictRefScroll) dictRefScroll.scrollTop = 0;
+  }
+
   async function loadNextSession({ autoplay = true } = {}) {
     if (dictStatsEl) { dictStatsEl.textContent = ""; dictStatsEl.hidden = true; }
     dictCheckBtn.disabled = true;
     dictNextBtn.disabled = true;
     dictResultEl.hidden = true;
     dictResultEl.innerHTML = "";
-    dictRefEl.hidden = true;
-    dictRefEl.innerHTML = "";
+    hideDictRef();
     dictScoreEl.hidden = true;
     lastGrade = null;
     hasCheckedThisSession = false;
@@ -376,8 +391,7 @@
   }
 
   function showRef() {
-    dictRefEl.hidden = false;
-    dictRefEl.scrollIntoView({ block: "nearest" });
+    showDictRef();
   }
 
   async function checkCurrent() {
@@ -428,8 +442,7 @@
     dictDetailEl.textContent = "";
     dictResultEl.hidden = true;
     dictResultEl.innerHTML = "";
-    dictRefEl.hidden = true;
-    dictRefEl.innerHTML = "";
+    hideDictRef();
     dictRevealBtn.hidden = true;
     lastGrade = null;
     hasCheckedThisSession = false;
@@ -486,6 +499,75 @@
   // even in dictation — no need to suppress. But when the textarea is focused
   // Space must type, so that global handler already bails when document.activeElement
   // is a text field (see app-listen.js isEditableTarget) — no action needed.
+
+  // ---------------------------------------------------------------------------
+  // Reference panel — draggable height (mirrors Watch's explain-panel)
+  // ---------------------------------------------------------------------------
+  (function wireDictRefResize() {
+    if (!dictRefResize || !bandEl) return;
+    const isDesktop = () => window.matchMedia("(min-width: 761px)").matches;
+    const key = () => isDesktop() ? "zx-panel-h" : "zx-panel-h-mobile";
+    const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+    const MIN_H = 140;
+    const maxH = () => {
+      if (isDesktop()) return Math.round(window.innerHeight * 0.85);
+      const playerH = parseFloat(getComputedStyle(bandEl).getPropertyValue("--player-h")) || 130;
+      return Math.max(MIN_H, Math.round(window.innerHeight - playerH - 24));
+    };
+    const applyH = (px) => {
+      const h = clamp(Math.round(px), MIN_H, maxH());
+      bandEl.style.setProperty("--panel-h", h + "px");
+      return h;
+    };
+    const curH = () => {
+      const v = parseFloat(getComputedStyle(bandEl).getPropertyValue("--panel-h"));
+      return v > 0 ? v : Math.round(window.innerHeight * 0.6);
+    };
+    dictRefResize.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      dictRefResize.setPointerCapture(e.pointerId);
+      dictRefResize.classList.add("dragging");
+      document.body.classList.add("resizing");
+      const startY = e.clientY, startH = curH();
+      const move = (ev) => applyH(startH + (startY - ev.clientY));
+      const up = () => {
+        dictRefResize.classList.remove("dragging");
+        document.body.classList.remove("resizing");
+        dictRefResize.removeEventListener("pointermove", move);
+        dictRefResize.removeEventListener("pointerup", up);
+        dictRefResize.removeEventListener("pointercancel", up);
+        try { localStorage.setItem(key(), String(curH())); } catch {}
+      };
+      dictRefResize.addEventListener("pointermove", move);
+      dictRefResize.addEventListener("pointerup", up);
+      dictRefResize.addEventListener("pointercancel", up);
+    });
+    dictRefResize.addEventListener("keydown", (e) => {
+      const cur = curH();
+      const next = e.key === "ArrowUp" ? cur + 24 : e.key === "ArrowDown" ? cur - 24 : null;
+      if (next === null) return;
+      e.preventDefault();
+      try { localStorage.setItem(key(), String(applyH(next))); } catch {}
+    });
+    // Touch-scroll quarantine inside the reference scroll (mirrors keepScrollInside)
+    if (dictRefScroll) {
+      let lastY = 0;
+      dictRefScroll.addEventListener("touchstart", (e) => {
+        if (e.touches.length === 1) lastY = e.touches[0].clientY;
+      }, { passive: true });
+      dictRefScroll.addEventListener("touchmove", (e) => {
+        if (e.touches.length !== 1) return;
+        const y = e.touches[0].clientY;
+        const dy = y - lastY;
+        lastY = y;
+        if (dy === 0) return;
+        const canScroll = dictRefScroll.scrollHeight - dictRefScroll.clientHeight > 0;
+        const atTop = dictRefScroll.scrollTop <= 0;
+        const atBottom = dictRefScroll.scrollTop + dictRefScroll.clientHeight >= dictRefScroll.scrollHeight - 1;
+        if ((!canScroll || (atTop && dy > 0) || (atBottom && dy < 0)) && e.cancelable) e.preventDefault();
+      }, { passive: false });
+    }
+  })();
 
   // ---------------------------------------------------------------------------
   // Boot
