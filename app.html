@@ -1141,6 +1141,14 @@
   }
   .dictation-ref[hidden] { display: none; }
   .dictation-ref strong { color: var(--text); }
+  .dictation-ref .dictation-ref-word {
+    cursor: pointer;
+    padding: 1px 2px;
+    margin: 0 -2px;
+    border-radius: 4px;
+    transition: background 0.12s ease;
+  }
+  .dictation-ref .dictation-ref-word:hover { background: var(--word-hover, rgba(255,255,255,0.08)); }
   .dictation-empty {
     padding: 40px 20px;
     text-align: center;

@@ -65,6 +65,23 @@
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
 
+  const DICT_WORD_RE = /[\p{L}\p{N}](?:[\p{L}\p{N}'’\-]*[\p{L}\p{N}])?/gu;
+
+  function renderDictationReference(reference) {
+    const text = String(reference || "");
+    const re = new RegExp(DICT_WORD_RE.source, DICT_WORD_RE.flags);
+    let html = '<strong>Reference:</strong> ';
+    let last = 0, m;
+    while ((m = re.exec(text)) !== null) {
+      if (m.index > last) html += escapeHtml(text.slice(last, m.index));
+      const w = m[0];
+      html += `<span class="word dictation-ref-word" data-word="${escapeHtml(w)}">${escapeHtml(w)}</span>`;
+      last = re.lastIndex;
+    }
+    if (last < text.length) html += escapeHtml(text.slice(last));
+    return html;
+  }
+
   // ---------------------------------------------------------------------------
   // Feature switch
   // ---------------------------------------------------------------------------
@@ -350,8 +367,9 @@
     dictResultEl.innerHTML = html.trim() || `<span style="color:var(--text-dim)">No words to compare.</span>`;
     dictResultEl.hidden = false;
 
-    // Reference paragraph — hidden until Reveal
-    dictRefEl.innerHTML = `<strong>Reference:</strong> ${escapeHtml(reference)}`;
+    // Reference paragraph — hidden until Reveal, words are clickable
+    // to trigger the same explanation panel as Watch (via window.__dictationExplain)
+    dictRefEl.innerHTML = renderDictationReference(reference);
     dictRevealBtn.hidden = false;
     // Auto-scroll the result into view
     dictResultEl.scrollIntoView({ block: "nearest" });
@@ -442,6 +460,16 @@
   if (dictRevealBtn) dictRevealBtn.addEventListener("click", showRef);
   if (dictNextBtn) dictNextBtn.addEventListener("click", completeAndNext);
   if (dictRetryBtn) dictRetryBtn.addEventListener("click", loadNextSession);
+
+  // Clicking a word in the Reference line triggers the explanation panel
+  // (same panel as Watch, via window.__dictationExplain exposed by app-listen.js).
+  if (dictRefEl) dictRefEl.addEventListener("click", (e) => {
+    const span = e.target.closest && e.target.closest(".dictation-ref-word");
+    if (!span) return;
+    const word = span.dataset.word || span.textContent || "";
+    const context = currentSession ? currentSession.reference : dictRefEl.textContent.replace(/^Reference:\s*/, "");
+    if (window.__dictationExplain) window.__dictationExplain(word, context);
+  });
 
   // Keyboard: Ctrl/Cmd+Enter to check, Enter on next when focused, and
   // plain Enter in the textarea should NOT submit (learner needs newlines).

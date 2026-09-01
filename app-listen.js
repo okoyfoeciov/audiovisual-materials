@@ -2408,4 +2408,15 @@
   applyVideoMode();  // no source yet → stage down (one source of truth)
   loadLibrary().then(() => { if (!currentEntry) renderLibraryGrid(libraryViewEl, libraryEntries); });
   setListen("idle");   // show the library grid; the caption stays empty
+
+  // Exposed for dictation: trigger the same explanation panel from the
+  // Reference line. `phrase` is the clicked word/phrase, `contextText`
+  // is the full sentence for the model's context window.
+  window.__dictationExplain = function(phrase, contextText) {
+    if (!phrase || !String(phrase).trim()) return;
+    const panel = nextPanelForSelection();
+    panel.threadText = String(contextText || phrase).trim() || String(phrase).trim();
+    const words = String(phrase).trim().split(/\s+/).filter(Boolean);
+    triggerExplain(panel, [{ phrase: String(phrase).trim(), words }]);
+  };
 })();
