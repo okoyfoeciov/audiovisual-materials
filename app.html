@@ -176,15 +176,6 @@
     flex-direction: column;
     border-top: 1px solid var(--border);
   }
-  .dictation-ref-panel {
-    flex: 0 0 auto;
-    min-height: 0;
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    border-top: 1px solid var(--border);
-    order: 1;
-  }
 
   /* Resize handle on the panel's top edge — drag up/down to change its height.
      Invisible at rest, a faint accent line on hover/drag. */
@@ -1158,15 +1149,42 @@
     transition: background 0.12s ease;
   }
   .dictation-ref .dictation-ref-word:hover { background: var(--word-hover, rgba(255,255,255,0.08)); }
-  /* Reference panel — anchored directly above the player, mirroring the
-     Watch tab's explanation panel (order 1, same --panel-h, same resize
-     handle). This is the "right up next" position of the audio playback:
-     the band's bottom-most item, nearest the caption/player. Identical to
-     .explain-panel in every property so height, spacing, font, weight
-     match pixel-for-pixel. */
+  /* A word inside the active A-B loop (right-click a word / right-drag a phrase),
+     same accent tint + underline the Watch caption uses. Restated here rather than
+     left to the shared .word.looping rule, which loses the cascade to
+     .dictation-ref .dictation-ref-word:hover the moment the cursor rests on it. */
+  .dictation-ref .dictation-ref-word.looping,
+  .dictation-ref .dictation-ref-word.looping:hover {
+    box-shadow: inset 0 -2px 0 0 var(--accent);
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    border-radius: 4px 4px 0 0;
+  }
+  /* Reference panel — the band's bottom-most item (order 1), "right up
+     next" to the audio playback, in the same place as the Watch tab's
+     explanation panel. Content-sized, NOT --panel-h like .explain-panel:
+     a reference is a sentence or two, so a fixed 60vh basis would strand
+     that line at the top of a half-empty slab. .dictation-ref-scroll's
+     max-height caps a long one, as .now-window's does for a long caption.
+
+     Floored at two lines, and the text sits at the BOTTOM of that floor.
+     References run one or two lines, and letting the box shrink-wrap each of
+     them made the panel's top edge — and the reference text with it — jump
+     every time a sentence happened to wrap. (The player itself never moves:
+     it is the flex sibling BELOW the band, and the band, being flex: 1 1 auto,
+     absorbs every height change the panel makes.) Reserving the taller of the
+     two states kills that jump the same way .now-window's min-height does for
+     the caption, and the spare line then goes ABOVE the text — which holds the
+     LAST line a fixed distance above the player, so a short reference still
+     reads as a subtitle instead of hanging with a gap beneath it. The min-height terms, box-sizing being border-box: two of
+     .dictation-ref-scroll's line boxes (15.5px x 1.65), its 20px top and
+     bottom padding, and this panel's own 1px border.
+     justify-content is safe against the flex overflow-clipping trap here —
+     the panel shrink-wraps its only child, so there is free space to align
+     only while the text is short, never while it overflows. */
   .dictation-ref-panel {
-    flex: 0 0 var(--panel-h, 60vh);
-    min-height: 0;
+    flex: 0 0 auto;
+    min-height: calc(2 * 1.65 * 15.5px + 41px);
+    justify-content: flex-end;
     position: relative;
     display: flex;
     flex-direction: column;
@@ -1237,14 +1255,6 @@
       bottom: var(--player-h, 130px);
       z-index: 10;
       background: color-mix(in srgb, var(--bg) 55%, var(--surface));
-    }
-    .dictation-ref-panel .panel-resize { top: -10px; height: 22px; }
-    .dictation-ref-panel .panel-resize::after {
-      opacity: 0.5;
-      left: 50%; right: auto;
-      width: 40px; height: 4px;
-      border-radius: 2px;
-      transform: translate(-50%, -50%);
     }
   }
 </style>
@@ -1320,11 +1330,11 @@
       </div>
     </div>
 
-    <!-- Dictation Reference panel — anchored directly above the player,
-         mirroring the Watch tab's explanation panel position (order 1,
-         same --panel-h drag handle). Right up next to the audio playback. -->
+    <!-- Dictation Reference panel — anchored directly above the player, in
+         the Watch tab's explanation-panel position (order 1). Right up next
+         to the audio playback. Sized to its text, so no drag handle: it
+         holds a sentence, and --panel-h belongs to the Watch panel. -->
     <div class="dictation-ref-panel" id="dictation-ref-panel" hidden>
-      <div class="panel-resize" id="dictation-ref-resize" role="separator" aria-orientation="horizontal" aria-label="Resize reference panel" tabindex="0"></div>
       <div class="dictation-ref-scroll" id="dictation-ref-scroll">
         <div class="dictation-ref" id="dictation-ref" hidden></div>
       </div>

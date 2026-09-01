@@ -33,7 +33,6 @@
   const dictResultEl = document.getElementById("dictation-result");
   const dictRefEl = document.getElementById("dictation-ref");
   const dictRefPanel = document.getElementById("dictation-ref-panel");
-  const dictRefResize = document.getElementById("dictation-ref-resize");
   const dictRefScroll = document.getElementById("dictation-ref-scroll");
   const dictEmptyEl = document.getElementById("dictation-empty");
   const dictEmptyMsg = document.getElementById("dictation-empty-msg");
@@ -43,10 +42,9 @@
   const audioEl = document.getElementById("ln-audio");
   const playerEl = document.getElementById("ln-player");
   const playBtn = document.getElementById("ln-play");
-  const bandEl = document.getElementById("ln-explain-band");
 
   let currentFeature = FEATURE_WATCH;
-  let currentSession = null; // {sessionId, entryId, entryTitle, start, end, duration, wordCount, reference}
+  let currentSession = null; // {sessionId, entryId, entryTitle, start, end, duration, wordCount, reference, words}
   let lastGrade = null;
   let hasCheckedThisSession = false;
 
@@ -56,6 +54,19 @@
   let dLoopRAF = null;
   const D_LOOP_LEAD_IN = 0.03;
   const D_LOOP_TAIL = 0.15;
+
+  // An A-B LOOP over a phrase INSIDE the segment — right-click a reference word to
+  // loop that word, right-press-and-drag across words to loop the phrase. The same
+  // gesture, pads and toggle semantics as the Watch caption's loop (app-listen.js,
+  // "the caption owns the right button"), on the one word-level surface dictation
+  // has. It is deliberately a THIRD loop, distinct from both Watch's loopStart/
+  // loopEnd and the segment window above: Watch's outside-click handler nulls only
+  // its own, and the segment plays once and stops where this one repeats until
+  // cleared. Both null = no A-B loop, and the segment behaves exactly as before.
+  let abStart = null, abEnd = null;
+  const AB_LEAD_IN = 0.03;   // start this far before the first word, so its onset isn't clipped
+  const AB_TAIL = 0.12;      // …and this far past the last, so its final syllable finishes
+  const AB_MIN = 0.35;       // floor length when the ASR reports end == start (degenerate)
 
   function fmt(s) {
     s = Math.max(0, Math.floor(s || 0));
@@ -70,7 +81,33 @@
 
   const DICT_WORD_RE = /[\p{L}\p{N}](?:[\p{L}\p{N}'’\-]*[\p{L}\p{N}])?/gu;
 
-  function renderDictationReference(reference) {
+  // Strip leading/trailing punctuation, so a span reading "problem." still asks
+  // the explanation panel about "problem" (what the old regex renderer captured).
+  const DICT_WORD_TRIM_RE = /^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu;
+
+  // Reference paragraph, rendered FROM the session's ASR word array so every span
+  // carries its own data-start/data-end — that is what makes a right-click or
+  // right-drag loopable, exactly as the Watch caption's word spans are. The
+  // session's reference text is precisely these words joined by single spaces
+  // (backend/dictation.js partitionTranscript), so this reproduces it verbatim.
+  function renderDictationReferenceFromWords(words) {
+    let html = "";
+    for (let i = 0; i < words.length; i++) {
+      const w = words[i];
+      const shown = String(w.text || "");
+      const bare = shown.replace(DICT_WORD_TRIM_RE, "");
+      html += (i ? " " : "") +
+        `<span class="word dictation-ref-word" data-i="${i}" data-start="${w.start}" data-end="${w.end}"` +
+        ` data-word="${escapeHtml(bare)}">${escapeHtml(shown)}</span>`;
+    }
+    return `<p>${html}</p>`;
+  }
+
+  // Fallback for a session the backend sent no timings for (unreadable transcript,
+  // or an older backend): the words are still clickable for an explanation, they
+  // just can't be looped — a right-click says so rather than dying silently.
+  function renderDictationReference(reference, words) {
+    if (Array.isArray(words) && words.length) return renderDictationReferenceFromWords(words);
     const text = String(reference || "");
     const re = new RegExp(DICT_WORD_RE.source, DICT_WORD_RE.flags);
     let html = '';
@@ -119,6 +156,7 @@
       // Leaving dictation: stop its loop, but keep its session in memory so
       // returning is instant (re-press Dictation to resume same clip).
       stopDictLoop();
+      clearAbLoop();
       // Let Watch decide its own library/video visibility (goHome / setSource
       // already manage hidden). Ensure dictation-only chrome is hidden from
       // the band's flex layout.
@@ -176,6 +214,7 @@
   }
 
   function hideDictRef() {
+    clearAbLoop();   // the looped words are gone, so the loop goes with them
     if (dictRefEl) { dictRefEl.hidden = true; dictRefEl.innerHTML = ""; }
     if (dictRefPanel) dictRefPanel.hidden = true;
     if (dictRefScroll) dictRefScroll.scrollTop = 0;
@@ -217,6 +256,13 @@
         duration: Number(data.duration) || 0,
         wordCount: Number(data.wordCount) || 0,
         reference: String(data.reference || ""),
+        // Per-word ASR timings for this segment — the raw material for the A-B
+        // loop below. [] from a backend that couldn't read the transcript.
+        words: Array.isArray(data.words) ? data.words.map((w) => ({
+          text: String(w.text || ""),
+          start: Number(w.start) || 0,
+          end: Number(w.end) || Number(w.start) || 0,
+        })) : [],
       };
       // Update header
       dictTitleEl.textContent = currentSession.entryTitle || currentSession.entryId;
@@ -252,8 +298,17 @@
 
   function dictLoopTick() {
     dLoopRAF = null;
-    if (dLoopStart == null || dLoopEnd == null) return;
     if (!audioEl.src || audioEl.paused || audioEl.error) return;
+    // An A-B loop takes precedence over the segment window, and REPEATS where the
+    // segment deliberately plays once and stops (the pause branch below).
+    if (abStart != null && abEnd != null) {
+      if ((audioEl.currentTime || 0) >= abEnd) {
+        try { audioEl.currentTime = Math.max(0, abStart - AB_LEAD_IN); } catch {}
+      }
+      dLoopRAF = requestAnimationFrame(dictLoopTick);
+      return;
+    }
+    if (dLoopStart == null || dLoopEnd == null) return;
     const pos = audioEl.currentTime || 0;
     if (pos >= dLoopEnd - 0.02) {
       // Auto-loop disabled: play once then pause and reset to start for
@@ -265,6 +320,69 @@
       return;
     }
     dLoopRAF = requestAnimationFrame(dictLoopTick);
+  }
+
+  // ---------------------------------------------------------------------------
+  // A-B loop over a phrase inside the segment (right-click / right-drag)
+  // ---------------------------------------------------------------------------
+
+  // Momentary message in the header's loop-range slot, restored after a beat.
+  // Dictation has no access to Watch's flashHint() — it lives in that closure.
+  let loopHintTimer = null;
+  function flashLoopHint(msg) {
+    if (!dictLoopRange) return;
+    dictLoopRange.textContent = msg;
+    if (loopHintTimer) clearTimeout(loopHintTimer);
+    loopHintTimer = setTimeout(() => {
+      loopHintTimer = null;
+      if (!currentSession) return;
+      dictLoopRange.textContent =
+        `${fmt(currentSession.start)} \u2013 ${fmt(currentSession.end)}  \u00b7  ${currentSession.wordCount} words`;
+    }, 1800);
+  }
+
+  // Mark every reference word inside [abStart, abEnd) with .looping. Matched by
+  // start time rather than index, so it survives a re-render of the paragraph.
+  function applyAbLoopMark() {
+    if (!dictRefEl) return;
+    for (const sp of dictRefEl.querySelectorAll(".dictation-ref-word")) {
+      const s = parseFloat(sp.dataset.start);
+      sp.classList.toggle("looping",
+        abStart != null && !isNaN(s) && s >= abStart - 0.001 && s < abEnd - 0.001);
+    }
+  }
+
+  // Always repaints, even when nothing was looping — it doubles as the way a
+  // drag PREVIEW is wiped when the gesture ends without setting a loop.
+  function clearAbLoop() {
+    abStart = null; abEnd = null;
+    applyAbLoopMark();
+  }
+
+  // Loop reference words [i0..i1] (one word when i0 === i1): jump to the phrase and
+  // play it at once, so the loop is audible without touching the transport.
+  function setAbLoopFromWords(i0, i1) {
+    const words = (currentSession && currentSession.words) || [];
+    const a = Math.min(i0, i1), b = Math.max(i0, i1);
+    let s = Infinity, e = -Infinity;
+    for (let k = a; k <= b; k++) {
+      const w = words[k];
+      if (!w || !isFinite(w.start)) continue;
+      if (w.start < s) s = w.start;
+      const we = (isFinite(w.end) && w.end > w.start) ? w.end : w.start;
+      if (we > e) e = we;
+    }
+    if (!isFinite(s) || !isFinite(e)) { flashLoopHint("No word timings to loop"); return false; }
+    if (e - s < 0.05) e = s + AB_MIN;                    // ASR gave no real end → synthesize one
+    e += AB_TAIL;
+    const next = words[b + 1];                           // …but never reach into the next word
+    if (next && isFinite(next.start)) e = Math.min(e, next.start);
+    abStart = s; abEnd = e;
+    applyAbLoopMark();
+    try { audioEl.currentTime = Math.max(0, abStart - AB_LEAD_IN); } catch {}
+    if (audioEl.paused) { const p = audioEl.play(); if (p && p.catch) p.catch(() => {}); }
+    startDictLoop();
+    return true;
   }
 
   async function ensureDictationAudio({ autoplay = true } = {}) {
@@ -326,13 +444,24 @@
   // (auto-loop disabled). Keep monitoring on play/seeked so we stop
   // precisely at dLoopEnd; do NOT restart on 'ended'.
   if (audioEl) {
-    audioEl.addEventListener("play", () => { if (currentFeature === FEATURE_DICTATION && dLoopStart != null) startDictLoop(); });
+    audioEl.addEventListener("play", () => {
+      if (currentFeature === FEATURE_DICTATION && (dLoopStart != null || abStart != null)) startDictLoop();
+    });
     audioEl.addEventListener("ended", () => {
-      if (currentFeature !== FEATURE_DICTATION || dLoopStart == null) return;
+      if (currentFeature !== FEATURE_DICTATION) return;
+      // An A-B loop whose end sits at the very end of the file reaches 'ended'
+      // before the watcher catches it — send it round again rather than stopping.
+      if (abStart != null) {
+        try { audioEl.currentTime = Math.max(0, abStart - AB_LEAD_IN); } catch {}
+        const p = audioEl.play(); if (p && p.catch) p.catch(() => {});
+        startDictLoop();
+        return;
+      }
+      if (dLoopStart == null) return;
       stopDictLoop();
     });
     audioEl.addEventListener("seeked", () => {
-      if (currentFeature !== FEATURE_DICTATION || dLoopStart == null) return;
+      if (currentFeature !== FEATURE_DICTATION || (dLoopStart == null && abStart == null)) return;
       if (!audioEl.paused) startDictLoop();
     });
   }
@@ -384,7 +513,7 @@
 
     // Reference paragraph — hidden until Reveal, words are clickable
     // to trigger the same explanation panel as Watch (via window.__dictationExplain)
-    dictRefEl.innerHTML = renderDictationReference(reference);
+    dictRefEl.innerHTML = renderDictationReference(reference, currentSession && currentSession.words);
     dictRevealBtn.hidden = false;
     // Auto-scroll the result into view
     dictResultEl.scrollIntoView({ block: "nearest" });
@@ -484,6 +613,96 @@
     if (window.__dictationExplain) window.__dictationExplain(word, context);
   });
 
+  // Right-click a Reference word to loop it, right-press-and-drag across words to
+  // loop the phrase — the Watch caption's gesture, on the dictation panel. The
+  // right button doesn't drag-select natively (it fires 'contextmenu', suppressed
+  // just below), so the whole gesture is driven off mousedown → mousemove → mouseup
+  // ourselves, exactly as app-listen.js does for the caption.
+  let abDrag = null;
+
+  // Live preview while dragging: paint the range as it WOULD loop, without
+  // committing it. Wiped by applyAbLoopMark() when the gesture ends.
+  function paintAbDragRange() {
+    if (!abDrag || abDrag.startIdx == null || !dictRefEl) return;
+    const a = Math.min(abDrag.startIdx, abDrag.currentIdx);
+    const b = Math.max(abDrag.startIdx, abDrag.currentIdx);
+    for (const sp of dictRefEl.querySelectorAll(".dictation-ref-word")) {
+      const i = Number(sp.dataset.i);
+      sp.classList.toggle("looping", !isNaN(i) && i >= a && i <= b);
+    }
+  }
+
+  if (dictRefEl) {
+    // The panel owns the right button, so the native menu never pops mid-gesture.
+    dictRefEl.addEventListener("contextmenu", (e) => { e.preventDefault(); });
+
+    dictRefEl.addEventListener("mousedown", (e) => {
+      if (e.button !== 2) return;
+      e.preventDefault();
+      if (!currentSession || !(currentSession.words || []).length) {
+        flashLoopHint("No word timings to loop");
+        return;
+      }
+      const span = e.target.closest && e.target.closest(".dictation-ref-word");
+      // Right-pressing OFF a word leaves startIdx null; mousemove can still anchor
+      // the drag on the first word it crosses, and a release that never did clears.
+      const i = span && span.dataset.i !== undefined ? Number(span.dataset.i) : null;
+      abDrag = { startIdx: i, currentIdx: i, moved: false };
+      if (i != null) paintAbDragRange();
+    });
+
+    dictRefEl.addEventListener("mousemove", (e) => {
+      if (!abDrag) return;
+      if (e.buttons === 0) {   // a release we never saw — recover, don't keep a stale preview
+        abDrag = null;
+        applyAbLoopMark();
+        return;
+      }
+      const span = e.target.closest && e.target.closest(".dictation-ref-word");
+      if (!span || span.dataset.i === undefined) return;
+      const i = Number(span.dataset.i);
+      if (abDrag.startIdx == null) { abDrag.startIdx = abDrag.currentIdx = i; paintAbDragRange(); return; }
+      if (i === abDrag.currentIdx) return;
+      abDrag.currentIdx = i;
+      if (i !== abDrag.startIdx) abDrag.moved = true;
+      paintAbDragRange();
+    });
+  }
+
+  // Released anywhere, so a drag that slips off the panel still commits.
+  window.addEventListener("mouseup", () => {
+    if (!abDrag) return;
+    const ds = abDrag; abDrag = null;
+    if (ds.startIdx == null) { clearAbLoop(); return; }   // right-clicked empty space → stop
+    // A single right-click on the word already looping toggles the loop OFF.
+    const w0 = ((currentSession && currentSession.words) || [])[ds.startIdx];
+    if (!ds.moved && w0 && abStart != null && Math.abs((Number(w0.start) || 0) - abStart) < 0.001) {
+      clearAbLoop();
+      return;
+    }
+    setAbLoopFromWords(ds.startIdx, ds.currentIdx);
+  });
+
+  // The same reflex Watch has: ANY press other than the right button (which sets or
+  // extends the loop) stops it — click anywhere to stop looping. Scoped to the
+  // dictation feature so it never touches Watch's own loop.
+  document.addEventListener("mousedown", (e) => {
+    if (e.button === 2) return;
+    if (currentFeature !== FEATURE_DICTATION) return;
+    if (abStart == null) return;
+    clearAbLoop();
+  });
+
+  // Esc stops the loop, mirroring Watch. Allowed while the notepad has focus —
+  // Escape types nothing, and a learner mid-sentence is exactly who wants it.
+  document.addEventListener("keydown", (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (currentFeature !== FEATURE_DICTATION) return;
+    if (e.key !== "Escape" || abStart == null) return;
+    e.preventDefault();
+    clearAbLoop();
+  });
+
   // Keyboard: Ctrl/Cmd+Enter to check, Enter on next when focused, and
   // plain Enter in the textarea should NOT submit (learner needs newlines).
   if (dictInput) {
@@ -501,55 +720,9 @@
   // is a text field (see app-listen.js isEditableTarget) — no action needed.
 
   // ---------------------------------------------------------------------------
-  // Reference panel — draggable height (mirrors Watch's explain-panel)
+  // Reference panel — touch-scroll quarantine (mirrors keepScrollInside)
   // ---------------------------------------------------------------------------
-  (function wireDictRefResize() {
-    if (!dictRefResize || !bandEl) return;
-    const isDesktop = () => window.matchMedia("(min-width: 761px)").matches;
-    const key = () => isDesktop() ? "zx-panel-h" : "zx-panel-h-mobile";
-    const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
-    const MIN_H = 140;
-    const maxH = () => {
-      if (isDesktop()) return Math.round(window.innerHeight * 0.85);
-      const playerH = parseFloat(getComputedStyle(bandEl).getPropertyValue("--player-h")) || 130;
-      return Math.max(MIN_H, Math.round(window.innerHeight - playerH - 24));
-    };
-    const applyH = (px) => {
-      const h = clamp(Math.round(px), MIN_H, maxH());
-      bandEl.style.setProperty("--panel-h", h + "px");
-      return h;
-    };
-    const curH = () => {
-      const v = parseFloat(getComputedStyle(bandEl).getPropertyValue("--panel-h"));
-      return v > 0 ? v : Math.round(window.innerHeight * 0.6);
-    };
-    dictRefResize.addEventListener("pointerdown", (e) => {
-      e.preventDefault();
-      dictRefResize.setPointerCapture(e.pointerId);
-      dictRefResize.classList.add("dragging");
-      document.body.classList.add("resizing");
-      const startY = e.clientY, startH = curH();
-      const move = (ev) => applyH(startH + (startY - ev.clientY));
-      const up = () => {
-        dictRefResize.classList.remove("dragging");
-        document.body.classList.remove("resizing");
-        dictRefResize.removeEventListener("pointermove", move);
-        dictRefResize.removeEventListener("pointerup", up);
-        dictRefResize.removeEventListener("pointercancel", up);
-        try { localStorage.setItem(key(), String(curH())); } catch {}
-      };
-      dictRefResize.addEventListener("pointermove", move);
-      dictRefResize.addEventListener("pointerup", up);
-      dictRefResize.addEventListener("pointercancel", up);
-    });
-    dictRefResize.addEventListener("keydown", (e) => {
-      const cur = curH();
-      const next = e.key === "ArrowUp" ? cur + 24 : e.key === "ArrowDown" ? cur - 24 : null;
-      if (next === null) return;
-      e.preventDefault();
-      try { localStorage.setItem(key(), String(applyH(next))); } catch {}
-    });
-    // Touch-scroll quarantine inside the reference scroll (mirrors keepScrollInside)
+  (function wireDictRefScroll() {
     if (dictRefScroll) {
       let lastY = 0;
       dictRefScroll.addEventListener("touchstart", (e) => {
@@ -584,6 +757,7 @@
   window.__dictation = {
     get session() { return currentSession; },
     get feature() { return currentFeature; },
+    get abLoop() { return abStart == null ? null : { start: abStart, end: abEnd }; },
     setFeature,
     loadNextSession,
     checkCurrent,

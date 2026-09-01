@@ -113,6 +113,10 @@ app.get("/api/dictation/session", (req, res) => {
       end: s.end,
       duration: s.duration,
       wordCount: s.wordCount,
+      // Per-word ASR timings for this segment, so the client can loop a phrase
+      // inside it (right-click / right-drag on a reference word). [] when the
+      // transcript can't be read — the client falls back to segment-only replay.
+      words: dictation.getSessionWords(s),
       // Reference text is intentionally included so the client can display it
       // *after* checking — the grading itself is server-side on /api/dictation/check,
       // so a client that peeks early gains nothing.

@@ -336,6 +336,36 @@ function getAllSessionsDetailed() {
   return out;
 }
 
+/**
+ * The session's own words, with their ASR timings — the slice
+ * [wordStart..wordEnd] of the entry's flat word array that the session was cut
+ * from. The reference TEXT alone carries no timings, so without this the client
+ * can only replay the whole segment; with it, a learner can right-drag a phrase
+ * inside the segment and loop just that (mirroring the Watch caption's A-B loop).
+ * Interpolating the timings client-side from the segment's start/end was the
+ * alternative and would drift worst on exactly the fast, crowded speech that is
+ * worth replaying.
+ *
+ * Returns [] when the transcript is missing or unreadable — the caller degrades
+ * to a segment-only replay rather than failing the whole session.
+ */
+function getSessionWords(session) {
+  if (!session) return [];
+  try {
+    const entry = db.getEntry(session.entryId);
+    if (!entry || !entry.transcriptPath) return [];
+    const data = JSON.parse(fs.readFileSync(entry.transcriptPath, "utf8"));
+    const words = Array.isArray(data.words) ? data.words : [];
+    return words.slice(session.wordStart, session.wordEnd + 1).map((w) => ({
+      text: String(w.text || "").trim(),
+      start: Number(w.start) || 0,
+      end: Number(w.end) || Number(w.start) || 0,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 function pickNextSession() {
   const all = getAllSessionsDetailed();
   if (!all.length) return null;
@@ -455,6 +485,7 @@ module.exports = {
   isSessionValid,
   getPBSEntries,
   getAllSessionsDetailed,
+  getSessionWords,
   pickNextSession,
   getSessionById,
   normalizeWords,
