@@ -56,8 +56,8 @@ exact failure this rule exists to prevent.
 1. **Push / fetch / pull:** just run `git push` / `git fetch`. The local helper
    supplies the `.env` token automatically. Do not pass `-c credential.helper=`,
    do not use `gh auth setup-git`, do not embed a token in the remote URL.
-2. **GitHub API calls** (creating repos, reading repo metadata, releases,
-   issues): read the token out of `.env` and pass it explicitly.
+2. **GitHub API calls** (creating repos, reading repo metadata, issues):
+   read the token out of `.env` and pass it explicitly.
 
    ```bash
    GH_TOKEN="$(grep -m1 '^GH_TOKEN=' .env | cut -d= -f2-)"
@@ -129,64 +129,56 @@ extension gets). `main.js` is the Electron shell. Avoid changing
 `app-listen.js` unless the task requires it — keep adaptations isolated to
 `app-base.js`/`main.js` so the diff against comart's original stays legible.
 
-## Packaging & releases
+## Packaging
 
-### Version + build
+### This project ships no prebuilt artifacts
 
-1. Bump `version` in `package.json` — this project bumps the patch digit for
-   every release, feature or fix alike (`git log -p -- package.json` to see
-   the pattern). Commit that on its own.
-2. `npm run dist:linux` → `dist/audiovisual-materials_<version>_amd64.deb`.
-3. `npm run dist:mac` → `dist/Audiovisual Materials-<version>-mac.zip` — see
-   the gotcha below; as of this writing it only works on an actual Mac.
+There are no GitHub releases here and no binaries attached to the repo, and
+none should be created. Every machine that wants the app pulls this source and
+builds its own package — on macOS a `.dmg`, on Linux a `.deb`. **Do not create
+a release, do not upload an artifact, do not cut a version tag as one.**
 
-### macOS build gotcha
+The reason is the cross-build wall documented below: neither platform can build
+the other's package here, so a release could only ever carry the artifact for
+whichever machine happened to cut it — which is exactly the half-empty release
+this repo's history ended up with. Building where you run it is both simpler
+and always complete.
 
-`build.mac.target` in `package.json` is `"dmg"`, but every release so far has
-shipped a plain `.zip`, never a `.dmg` — electron-builder produces the zip as
-an auto-update side-artifact even when the primary target is dmg.
+Seven releases (`v1.0.0`–`v1.0.6`) existed until they were deliberately
+deleted. The `vX.Y.Z` tags GitHub created for them may still be on the remote;
+they point at real commits and are historical markers only — nothing builds
+from them or expects them.
 
-Building on Linux needs `dmg-license`, a macOS-only optional dependency
-(`"os": ["darwin"]` in `package-lock.json`) that a plain `npm install` prunes
-on any other platform — that alone fails the build with `Cannot find module
-'dmg-license'` before packaging even starts. Force-installing it —
+### Build
+
+```
+npm install
+npm run dist:linux   # → dist/audiovisual-materials_<version>_amd64.deb
+npm run dist:mac     # → dist/*.dmg (plus a .zip side-artifact) — Mac only, see below
+```
+
+`version` in `package.json` now only names the output file. It used to be
+bumped one patch digit per release; with releases gone there is nothing to bump
+it *for*, so change it when you want a different artifact name — not on every
+commit, as the old rule had it.
+
+### Why each platform must build its own
+
+`build.mac.target` is `"dmg"`; electron-builder emits a plain `.zip` alongside
+it as an auto-update side-artifact, so a Mac build produces both.
+
+Building the mac target **on Linux does not work**. It needs `dmg-license`, a
+macOS-only optional dependency (`"os": ["darwin"]` in `package-lock.json`) that
+a plain `npm install` prunes on any other platform — that alone fails the build
+with `Cannot find module 'dmg-license'` before packaging even starts.
+Force-installing it —
 
 ```
 npm install --no-save --force --os=darwin --cpu=x64 dmg-license
 ```
 
-gets past that, but its own dependency `iconv-corefoundation` ships a
-**native Mach-O binary** (compiled for Darwin), which fails immediately on
-Linux with `invalid ELF header`. There is no further workaround short of
-building on an actual Mac, or setting up real cross-compilation tooling,
-which this project doesn't have. The v1.0.3 release shipped Linux-only for
-exactly this reason — check whether a later release restored the macOS
-artifact before assuming this is still broken.
-
-### Creating a GitHub release
-
-Releases are tagged `vX.Y.Z`, target `main`, and follow the same body shape
-every time: a short paragraph of what changed, then a `## Downloads` section
-listing the Linux `.deb` and macOS `.zip` (or noting one is missing, as
-above). No local git tag is created for these — GitHub creates the tag from
-`tag_name` when the release is created through the API.
-
-Per the remote-access rule at the top of this file, use `GH_TOKEN` from
-`.env` explicitly, not `gh auth` / the keyring:
-
-```bash
-GH_TOKEN="$(grep -m1 '^GH_TOKEN=' .env | cut -d= -f2-)"
-curl -sS -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-     https://api.github.com/repos/okoyfoeciov/audiovisual-materials/releases \
-     -d '{"tag_name":"vX.Y.Z","target_commitish":"main","name":"vX.Y.Z","body":"...","draft":false,"prerelease":false}'
-```
-
-Then upload each build artifact with `POST` to the `upload_url` the create
-call returned (`Content-Type: application/x-debian-package` for the `.deb`,
-`application/zip` for the mac zip):
-
-```bash
-curl -sS -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/x-debian-package" \
-     --data-binary @dist/audiovisual-materials_<version>_amd64.deb \
-     "https://uploads.github.com/repos/okoyfoeciov/audiovisual-materials/releases/<release_id>/assets?name=audiovisual-materials_<version>_amd64.deb"
-```
+gets past that, but its own dependency `iconv-corefoundation` ships a **native
+Mach-O binary** (compiled for Darwin), which fails immediately on Linux with
+`invalid ELF header`. There is no further workaround short of building on an
+actual Mac, or setting up real cross-compilation tooling, which this project
+does not have.
