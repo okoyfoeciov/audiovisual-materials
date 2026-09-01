@@ -746,12 +746,18 @@
   // Boot
   // ---------------------------------------------------------------------------
 
+  // initFeature() -> setFeature() already runs this exact guard
+  // (`if (!currentSession) loadNextSession(...)`) when it enters Dictation, so
+  // repeating it here fired a SECOND request: loadNextSession is async, so it
+  // returns at its first await with currentSession still null, and the guard
+  // below passed too. Both landed on /api/dictation/session, which picks
+  // uniformly at random (backend/dictation.js pickNextSession) — two different
+  // sessions racing to set currentSession, the title and the audio, last one
+  // winning. Nothing was lost (only Next marks a session complete), but it was
+  // a wasted round trip and a race. setFeature owns the load; boot only has to
+  // cover the Watch side, which it never calls refreshDictationView() for.
   initFeature();
-  if (currentFeature === FEATURE_DICTATION && !currentSession) {
-    loadNextSession({ autoplay: false });
-  } else {
-    refreshDictationView();
-  }
+  if (currentFeature !== FEATURE_DICTATION) refreshDictationView();
 
   // Expose for console debugging
   window.__dictation = {
