@@ -463,7 +463,7 @@
 
   initFeature();
   if (currentFeature === FEATURE_DICTATION && !currentSession) {
-    loadNextSession();
+    loadNextSession({ autoplay: false });
   } else {
     refreshDictationView();
   }
