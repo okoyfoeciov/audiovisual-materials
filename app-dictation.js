@@ -134,21 +134,11 @@
   // ---------------------------------------------------------------------------
 
   async function fetchDictStats() {
-    try {
-      const r = await fetch(apiBase() + "/api/dictation/stats");
-      if (!r.ok) throw new Error(String(r.status));
-      return await r.json();
-    } catch { return null; }
+    return null;
   }
 
   async function refreshDictationView() {
-    const stats = await fetchDictStats();
-    if (stats) {
-      const { total, completed, remaining } = stats;
-      dictStatsEl.textContent = `${completed} completed · ${remaining} remaining · ${total} total sessions`;
-    } else {
-      dictStatsEl.textContent = "";
-    }
+    if (dictStatsEl) { dictStatsEl.textContent = ""; dictStatsEl.hidden = true; }
   }
 
   function showDictEmpty(msg) {
@@ -166,7 +156,7 @@
   }
 
   async function loadNextSession({ autoplay = true } = {}) {
-    dictStatsEl.textContent = "Picking next session…";
+    if (dictStatsEl) { dictStatsEl.textContent = ""; dictStatsEl.hidden = true; }
     dictCheckBtn.disabled = true;
     dictNextBtn.disabled = true;
     dictResultEl.hidden = true;
@@ -205,13 +195,12 @@
       dictCheckBtn.disabled = false;
       dictNextBtn.disabled = false;
       await ensureDictationAudio({ autoplay });
-      dictStatsEl.textContent = data.exhausted ? "All sessions completed — recycling" : "";
-      // still refresh full stats in background
+      if (dictStatsEl) { dictStatsEl.textContent = ""; dictStatsEl.hidden = true; }
       refreshDictationView();
     } catch (e) {
       console.error("dictation next failed", e);
       showDictEmpty(e && e.message ? String(e.message) : "Could not load a session.");
-      dictStatsEl.textContent = "";
+      if (dictStatsEl) { dictStatsEl.textContent = ""; dictStatsEl.hidden = true; }
       dictNextBtn.disabled = false;
     }
   }
@@ -414,6 +403,22 @@
   }
 
   async function completeAndNext() {
+    // Clear grading numbers instantly on Next — don't wait for /complete or
+    // /session round-trips (previous behavior kept 85% / WER visible until
+    // loadNextSession's fetch completed). Capture score before clearing.
+    const scoreToSave = lastGrade && typeof lastGrade.score === "number" ? lastGrade.score : null;
+    dictScoreEl.hidden = true;
+    dictPctEl.textContent = "—";
+    dictPctEl.className = "pct";
+    dictDetailEl.textContent = "";
+    dictResultEl.hidden = true;
+    dictResultEl.innerHTML = "";
+    dictRefEl.hidden = true;
+    dictRefEl.innerHTML = "";
+    dictRevealBtn.hidden = true;
+    lastGrade = null;
+    hasCheckedThisSession = false;
+
     // Mark current session as done if the user at least interacted?
     // Spec: "We must track which sessions already exist" — don't re-pick
     // completed. Mark on Next regardless of whether they checked, so a
@@ -425,7 +430,7 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             sessionId: currentSession.sessionId,
-            score: lastGrade && typeof lastGrade.score === "number" ? lastGrade.score : null,
+            score: scoreToSave,
           }),
         });
       } catch (e) {
