@@ -959,20 +959,19 @@
   }
   .feature-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-  /* macOS hiddenInset: traffic lights at 16,16 sit over the content. Push the
-     tabs clear of them and make the gap draggable; buttons stay clickable. */
+  /* macOS hiddenInset: traffic lights at 16,16 sit over the content. Place the
+     tabs *under* the lights (not aside) — a new row below the 38px title-bar
+     strip. Buttons themselves stay clickable (no-drag). */
   html.is-darwin .feature-tabs {
-    left: 80px;
-    -webkit-app-region: drag;
-  }
-  html.is-darwin .feature-tab {
-    -webkit-app-region: no-drag;
+    left: 16px;
+    top: 38px;
   }
   html.is-darwin .lib-list-back {
     -webkit-app-region: no-drag;
   }
-  /* make the empty strip above the tabs draggable so the window can be moved
-     by grabbing the title-bar area (hiddenInset has no native title bar row) */
+  /* make the empty title-bar strip draggable so the window can be moved
+     by grabbing the area around the traffic lights (hiddenInset has no
+     native title-bar row) */
   html.is-darwin .explain-band::before {
     content: "";
     position: absolute;
@@ -993,14 +992,21 @@
   }
   html.is-darwin .feature-tabs { z-index: 5; }
   html.is-darwin .lib-list-back { z-index: 5; }
-  /* Tabs and the nested-view back button both float at 10,32 — without help
-     they sit on top of each other. When the back button is present, slide it
-     to the right of the tabs so both stay legible. */
+  /* Linux/Windows: tabs and the nested-view back button both float at 10,32 —
+     without help they sit on top of each other. When the back button is
+     present, slide it to the right of the tabs so both stay legible.
+     On macOS the tabs are *under* the lights (top 38), so no overlap. */
   .explain-band:has(.lib-list-back) .lib-list-back {
     left: 250px;
   }
-  html.is-darwin .explain-band:has(.lib-list-back) .lib-list-back {
-    left: 300px;
+  html.is-darwin .lib-list-back {
+    left: 80px;
+  }
+  html.is-darwin .explain-band {
+    padding-top: 78px;
+  }
+  html.is-darwin body.video-on .explain-band {
+    padding-top: 0;
   }
 
   /* ======================================================================
@@ -1188,11 +1194,10 @@
   body.dictation-on .library-view { display: none !important; }
   @media (max-width: 760px) {
     .feature-tabs { left: 16px; top: calc(10px + env(safe-area-inset-top)); }
-    html.is-darwin .feature-tabs { left: 80px; }
+    html.is-darwin .feature-tabs { left: 16px; top: calc(38px + env(safe-area-inset-top)); }
     .dictation-view { padding-left: 16px; padding-right: 16px; }
     .dictation-textarea { font-size: 16px; min-height: 120px; }
     .explain-band:has(.lib-list-back) .lib-list-back { left: 180px; }
-    html.is-darwin .explain-band:has(.lib-list-back) .lib-list-back { left: 200px; }
   }
 </style>
 </head>
