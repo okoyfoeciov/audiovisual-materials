@@ -31,7 +31,26 @@ const PBS_SEGMENTS_RSS = "https://www.pbs.org/newshour/feeds/rss/podcasts/segmen
 const YOUTUBE_CHANNEL_FEED = "https://www.youtube.com/feeds/videos.xml?channel_id=UC6ZFN9Tx6xh-skXCuRHCDpQ";
 const SHOW_ID = "pbs-newshour";
 const SHOW_TITLE = "PBS NewsHour";
-const KEEP_DAYS = 7;
+// How many broadcast days of segments to keep before pruning.
+//
+// This number is coupled to the dictation scheduler — do not lower it without
+// reading backend/dictation.js's applyAttemptSchedule. Dictation items are keyed
+// to these entries, so pruning a day deletes the sessions cut from it and
+// orphans every attempt logged against them.
+//
+// An item retires after three spaced passes, at SM-2 intervals of 1 then 6 days,
+// so the fastest possible path from first exposure to retirement is 7 days —
+// exactly the old value here, which deleted the audio on the very day a flawless
+// learner would have finished with it, and a day before anyone who slipped once.
+// Failures cost almost nothing (they requeue in 20 minutes, same day); what
+// actually stretches the window is practising irregularly, which is the normal
+// case. 30 gives roughly 4x margin over that floor.
+//
+// Retirement is terminal, so the requirement is bounded: a mastered item never
+// needs its audio again and is fine to prune. That is why a modest number works
+// and no permanent per-session archive is needed. At ~226 MB per day this is
+// ~7 GB steady state.
+const KEEP_DAYS = 30;
 const YT_DLP_FORMAT = "bv*[height<=720]+ba/b[height<=720]";
 
 // yt-dlp resolved as an absolute path, not left to whatever PATH the caller
