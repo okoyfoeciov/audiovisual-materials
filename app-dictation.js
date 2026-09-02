@@ -102,10 +102,14 @@
   const DICT_RATE_MIN = 0.6, DICT_RATE_MAX = 1.0;
   let dictRate = 1.0;
 
-  // Continuous loop over the segment, off by default and persisted. The segment
-  // otherwise plays once and stops (6da3781); this makes repeating it a toggle
-  // rather than a click per repetition.
-  const LS_DICT_LOOP = "av-dictation-loop";
+  // Continuous loop over the segment, off by default. The segment otherwise
+  // plays once and stops (6da3781); this makes repeating it a toggle rather
+  // than a click per repetition. Per session, NOT persisted: looping is what
+  // you switch on at the end of a session, to drill the sentence you have just
+  // checked — a new session always starts with it off, so a saved value would
+  // only ever be overwritten the moment the first session loads. (It used to
+  // be saved under "av-dictation-loop"; initDictLoop clears that key so an old
+  // "1" can never come back.)
   let dictLoopEnabled = false;
 
   function fmt(s) {
@@ -422,7 +426,7 @@
     applyDictRate();
   }
 
-  function setDictLoop(on, { persist = true } = {}) {
+  function setDictLoop(on) {
     dictLoopEnabled = !!on;
     if (dictLoopBtn) {
       dictLoopBtn.classList.toggle("active", dictLoopEnabled);
@@ -431,16 +435,14 @@
         ? "Looping this segment — click to play it once instead"
         : "Loop this segment continuously";
     }
-    if (persist) { try { localStorage.setItem(LS_DICT_LOOP, dictLoopEnabled ? "1" : "0"); } catch {} }
     // Turning it on mid-segment should start looping now, not after the next
     // manual play; the tick only runs while a loop is armed.
     if (dictLoopEnabled && !audioEl.paused) startDictLoop();
   }
 
   (function initDictLoop() {
-    let saved = false;
-    try { saved = localStorage.getItem(LS_DICT_LOOP) === "1"; } catch {}
-    setDictLoop(saved, { persist: false });
+    try { localStorage.removeItem("av-dictation-loop"); } catch {}
+    setDictLoop(false);
     if (dictLoopBtn) dictLoopBtn.addEventListener("click", () => setDictLoop(!dictLoopEnabled));
   })();
 
@@ -510,6 +512,11 @@
     hasCheckedThisSession = false;
     dictInput.value = "";
     dictRevealBtn.hidden = true;
+    // A new session starts with Loop off: the toggle belongs to the session it
+    // was switched on in (drilling the sentence just checked) and is never
+    // carried into the next one. Next already flips it at click time
+    // (completeAndNext); this covers Retry and the first load as well.
+    setDictLoop(false);
 
     try {
       const r = await fetch(apiBase() + "/api/dictation/session");
@@ -918,6 +925,9 @@
     dictRevealBtn.hidden = true;
     lastGrade = null;
     hasCheckedThisSession = false;
+    // Loop off at click time, not after the /complete round trip below: the
+    // segment must not keep repeating under an already-pressed Next.
+    setDictLoop(false);
 
     // Record the attempt. A session the learner never checked is reported as
     // SKIPPED, not as a completion: the backend logs it and leaves the item
