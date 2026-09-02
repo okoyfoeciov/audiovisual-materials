@@ -1712,11 +1712,48 @@
     if (currentEntry !== entry) return;   // superseded mid-fetch
     const pos = Number(data && data.positionSec) || 0;
     if (pos <= 0) return;
-    const doSeek = () => { seekTo(pos); audioEl.removeEventListener("loadedmetadata", doSeek); };
+    // Adaptation (not comart's): stamp the pending seek with the stream it is for.
+    // A 'loadedmetadata' listener is bound to the ELEMENT, and #ln-audio is shared
+    // with Daily Dictation — so switching tabs inside this fetch window would fire
+    // this against the DICTATION clip and drag it to a Watch timestamp. The
+    // currentEntry test above cannot catch that: dictation leaves currentEntry
+    // alone by design. (Same hazard app-dictation.js guards in seekToLoop/seekBack.)
+    const forSrc = audioEl.getAttribute("src");
+    const doSeek = () => {
+      audioEl.removeEventListener("loadedmetadata", doSeek);
+      if (audioEl.getAttribute("src") !== forSrc) return;
+      if (window.__dictationOwnsAudio && window.__dictationOwnsAudio()) return;
+      seekTo(pos);
+    };
     if (audioEl.readyState >= 1) doSeek(); else audioEl.addEventListener("loadedmetadata", doSeek);
   }
   function flushProgress() {
     if (!currentEntry || !audioEl.src) return;
+    // Adaptation (not comart's): #ln-audio is shared with Daily Dictation, which
+    // swaps in its own clip and deliberately leaves currentEntry alone. Both
+    // guards above stay true across that switch while naming DIFFERENT media, so
+    // this used to POST the dictation playhead to the Watch entry's progress
+    // record. Three conditions have to hold before a write is trustworthy:
+    //
+    //  1. Dictation is not driving the transport. The src test below is NOT
+    //     enough on its own: a dictation session drawn from the very entry Watch
+    //     has open passes it, and then the segment's offset would be saved as
+    //     the entry's resume point. Ownership, not identity, settles that one.
+    //     Ask dictation whether it actually took the element rather than testing
+    //     body.dictation-on — with no session loaded (backend down, or all
+    //     sessions done) the Dictation TAB is open while the element still holds
+    //     Watch's clip, and that playback deserves to be saved like any other.
+    if (window.__dictationOwnsAudio && window.__dictationOwnsAudio()) return;
+    //  2. The loaded stream really is this entry's — same test dictation uses for
+    //     `sameEntry`. Covers the window after a switch back, where the class is
+    //     already gone but the dictation clip has not been handed back yet.
+    if (!audioEl.src.includes(`/api/library/${encodeURIComponent(currentEntry.id)}/`)) return;
+    //  3. The element has actually loaded that stream. Between `src = …; load()`
+    //     and 'loadedmetadata' both tests above pass while currentTime is a
+    //     spec-mandated 0 — so a flush landing in that window (the Library button
+    //     right after returning from dictation) would silently reset the entry to
+    //     0:00. At HAVE_NOTHING there is no real playhead to save, ever.
+    if (audioEl.readyState < 1) return;
     const body = JSON.stringify({ positionSec: effPos() });
     const url = progressURL(currentEntry);
     if (navigator.sendBeacon) {
@@ -2086,7 +2123,14 @@
   const isDesktopBand = () => window.matchMedia("(min-width: 761px)").matches;
   // Desktop and mobile each remember their own panel height — a height that feels
   // right on a wide screen would swamp a phone, and vice-versa.
-  const panelHKey = () => isDesktopBand() ? "zx-panel-h" : "zx-panel-h-mobile";
+  // …and, on the same principle, a separate one for dictation: there the panel is
+  // allowed to shrink below --panel-h so the notepad keeps its floor, so a drag
+  // made in dictation starts from a squeezed box and would otherwise write that
+  // squeezed height into the height Watch reads back.
+  const panelHKey = () => {
+    const base = isDesktopBand() ? "zx-panel-h" : "zx-panel-h-mobile";
+    return document.body.classList.contains("dictation-on") ? base + "-dictation" : base;
+  };
   const clampPanelH = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
   const MIN_PANEL_H = 140;
   // Desktop: most of the viewport. Mobile: keep the panel within the band by
@@ -2160,7 +2204,13 @@
       handle.setPointerCapture(e.pointerId);
       handle.classList.add("dragging");
       document.body.classList.add("resizing");
-      const startY = e.clientY, startH = curPanelH();
+      // Seed from the RENDERED box, not from --panel-h. In dictation the panel is
+      // allowed to shrink below the variable (app.html body.dictation-on rule) so
+      // the notepad keeps its floor, and seeding from the variable would make the
+      // first N px of every drag do nothing. curPanelH() is the fallback for a
+      // panel that has not been laid out yet.
+      const boxH = Math.round(handle.parentElement.getBoundingClientRect().height);
+      const startY = e.clientY, startH = boxH || curPanelH();
       // Drag up (smaller clientY) → taller panel.
       const move = (ev) => applyPanelH(startH + (startY - ev.clientY));
       const up = () => {
@@ -2408,6 +2458,13 @@
   applyVideoMode();  // no source yet → stage down (one source of truth)
   loadLibrary().then(() => { if (!currentEntry) renderLibraryGrid(libraryViewEl, libraryEntries); });
   setListen("idle");   // show the library grid; the caption stays empty
+
+  // Exposed for dictation: checkpoint the open entry's position on demand.
+  // Dictation calls this immediately before it takes the shared <audio> over.
+  // It cannot rely on the 'pause' listener above to do it — pause() only QUEUES
+  // the media-element task, so that flush would land after dictation has already
+  // claimed ownership and be refused by guard 1.
+  window.__watchFlushProgress = flushProgress;
 
   // Exposed for dictation: trigger the same explanation panel from the
   // Reference line. `phrase` is the clicked word/phrase, `contextText`

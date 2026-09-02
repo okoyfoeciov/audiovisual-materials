@@ -1245,6 +1245,35 @@
   /* When dictation is active, the library grid is hidden — the dictation
      view owns the main region. */
   body.dictation-on .library-view { display: none !important; }
+  /* Watch's subtitle caption is inside .player, and dictation deliberately keeps
+     the player visible (audio-only). Both features also share one #ln-audio, so
+     app-listen.js keeps painting Watch transcript lines into #ln-now against the
+     DICTATION clip's timeline — unrelated subtitles surfacing under the Reference
+     panel. .now-window:empty can't collapse it: the content is live, not stale.
+     Dictation has its own reference panel; Watch's caption has no place here. */
+  body.dictation-on .now-window { display: none !important; }
+  /* Same story for the other Watch-owned things inside .player. The Library
+     button is wired to Watch's goHome(), which tears the src off the SHARED
+     <audio> — in dictation that silently kills the clip and repaints the grid
+     into a container the rule above keeps at display:none, so the click reads
+     as a no-op. Dictation has no library to go home to; the tabs are the way
+     back. NOTE: .ab-titlebar is deliberately NOT hidden with it — it carries
+     #ln-warn, the low-credit warning, and dictation raises that itself every
+     time a Reference word is explained. It collapses to 0px on its own via
+     .ab-warn[hidden], so there is nothing to hide. */
+  body.dictation-on .ab-menu { display: none !important; }
+  /* body.video-on drops the band's record-button clearance because in Watch the
+     picture owns the whole top of the page. That class survives a switch into
+     dictation, where there is no picture — just the floating tab pills, which
+     then land on top of the session title. Put the clearance back. */
+  body.video-on.dictation-on .explain-band { padding-top: 52px; }
+  /* The explanation panel is shared across both features by design, but it is
+     sized for Watch: flex-shrink 0 at --panel-h (60vh, up to 85vh once dragged).
+     In dictation the only flexible sibling is .dictation-view, so the whole
+     deficit lands on the notepad. Let the panel yield once the notepad hits a
+     floor that actually fits topbar + textarea + actions. */
+  body.dictation-on .explain-panel { flex: 0 1 var(--panel-h, 60vh); }
+  body.dictation-on .dictation-view { min-height: min(280px, 40vh); }
   @media (max-width: 760px) {
     .feature-tabs { left: 16px; top: calc(10px + env(safe-area-inset-top)); }
     .dictation-view { padding-left: 16px; padding-right: 16px; }
