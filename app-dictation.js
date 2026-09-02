@@ -17,6 +17,9 @@
   const videoWrap = document.getElementById("ln-video");
   const dictView = document.getElementById("dictation-view");
   const dictStatsEl = document.getElementById("dictation-stats");
+  const dictRateWrap = document.getElementById("dictation-rate-wrap");
+  const dictRateEl = document.getElementById("dictation-rate");
+  const dictRateVal = document.getElementById("dictation-rate-val");
   const dictMetaEl = document.getElementById("dictation-session-meta");
   const dictTitleEl = document.getElementById("dictation-title");
   const dictLoopHint = document.getElementById("dictation-loop-hint");
@@ -90,6 +93,13 @@
   const AB_LEAD_IN = 0.03;   // start this far before the first word, so its onset isn't clipped
   const AB_TAIL = 0.12;      // …and this far past the last, so its final syllable finishes
   const AB_MIN = 0.35;       // floor length when the ASR reports end == start (degenerate)
+  const AB_MIN_AUDIBLE = 0.12; // below this a loop window is inaudible, so treat it as degenerate
+
+  // Playback rate for the segment. Persisted, because a learner who needs 0.75x
+  // needs it on every session, not once.
+  const LS_DICT_RATE = "av-dictation-rate";
+  const DICT_RATE_MIN = 0.6, DICT_RATE_MAX = 1.0;
+  let dictRate = 1.0;
 
   function fmt(s) {
     s = Math.max(0, Math.floor(s || 0));
@@ -160,6 +170,9 @@
     // snapshot would throw away wherever they had got to.
     const owned = dictOwnsAudio;
     dictOwnsAudio = false;
+    // Hand the element back at normal speed — a slowed dictation clip must not
+    // leave Watch playing everything at 0.75x.
+    try { audioEl.playbackRate = 1; } catch {}
     if (!owned) { watchSrc = null; watchPos = 0; watchPlaying = false; return; }
     try { audioEl.pause(); } catch {}
     const nowSrc = audioEl.getAttribute("src") || "";
@@ -292,13 +305,95 @@
   // Dictation — stats + session loading
   // ---------------------------------------------------------------------------
 
+  // Progress, as reported by the scheduler. The backend has always computed
+  // total / due / retired and sent them on every request; nothing rendered them,
+  // so a drill built on daily repetition showed the learner no count, no trend,
+  // and no sign when the pool ran dry.
+  let lastProgress = null;
+
+  function renderDictStats(p) {
+    if (!dictStatsEl) return;
+    if (!p || !p.total) { dictStatsEl.hidden = true; dictStatsEl.textContent = ""; return; }
+    lastProgress = p;
+
+    const done = Math.max(0, (p.total || 0) - (p.unseen != null ? p.unseen : p.remaining || 0));
+    const bits = [`${done} / ${p.total} seen`];
+    if (p.due) bits.push(`<span class="due">${p.due} due</span>`);
+    if (p.retired) bits.push(`${p.retired} mastered`);
+
+    let html = bits.join('<span class="sep">·</span>');
+
+    // Recent scores oldest→newest, so the bars read left to right like a trend.
+    const recent = Array.isArray(p.recentScores) ? p.recentScores.slice().reverse() : [];
+    if (recent.length) {
+      const bars = recent.map((s) => {
+        const h = Math.max(3, Math.round((s / 100) * 14));
+        const cls = s >= 85 ? "good" : s < 60 ? "bad" : "";
+        return `<i class="${cls}" style="height:${h}px" title="${s}%"></i>`;
+      }).join("");
+      html += `<span class="sep">·</span><span class="recent">${bars}</span>`;
+    }
+
+    dictStatsEl.innerHTML = html;
+    dictStatsEl.hidden = false;
+  }
+
   async function fetchDictStats() {
-    return null;
+    try {
+      const r = await fetch(apiBase() + "/api/dictation/stats");
+      if (!r.ok) return null;
+      return await r.json();
+    } catch {
+      return null;
+    }
   }
 
   async function refreshDictationView() {
-    if (dictStatsEl) { dictStatsEl.textContent = ""; dictStatsEl.hidden = true; }
+    const p = await fetchDictStats();
+    if (p) renderDictStats(p);
   }
+
+  // ---------------------------------------------------------------------------
+  // Playback rate
+  //
+  // preservesPitch keeps a slowed clip intelligible rather than turning it into
+  // a drawl; without it, slowing speech is close to useless for decoding.
+  // ---------------------------------------------------------------------------
+
+  function applyDictRate() {
+    if (!audioEl) return;
+    // Only while dictation owns the element — Watch plays at its own speed.
+    const rate = dictOwnsAudio ? dictRate : 1.0;
+    try {
+      audioEl.preservesPitch = true;
+      audioEl.mozPreservesPitch = true;
+      audioEl.webkitPreservesPitch = true;
+    } catch {}
+    try { audioEl.playbackRate = rate; } catch {}
+  }
+
+  function setDictRate(rate, { persist = true } = {}) {
+    dictRate = Math.min(DICT_RATE_MAX, Math.max(DICT_RATE_MIN, Number(rate) || 1));
+    if (dictRateEl) dictRateEl.value = String(Math.round(dictRate * 100));
+    // Strip a trailing zero ("0.60" -> "0.6") but never the one in "1.0", which
+    // the old expression ate and rendered as "1.×" — the default label every
+    // learner who has not touched the slider sees.
+    if (dictRateVal) {
+      dictRateVal.textContent =
+        (dictRate === 1 ? "1.0" : dictRate.toFixed(2).replace(/0$/, "")) + "×";
+    }
+    if (persist) { try { localStorage.setItem(LS_DICT_RATE, String(dictRate)); } catch {} }
+    applyDictRate();
+  }
+
+  (function initDictRate() {
+    let saved = 1.0;
+    try { saved = Number(localStorage.getItem(LS_DICT_RATE)) || 1.0; } catch {}
+    setDictRate(saved, { persist: false });
+    if (dictRateEl) {
+      dictRateEl.addEventListener("input", () => setDictRate(Number(dictRateEl.value) / 100));
+    }
+  })();
 
   function showDictEmpty(msg) {
     dictEmptyMsg.textContent = msg || "No dictation sessions available.";
@@ -306,6 +401,7 @@
     dictWrap.hidden = true;
     dictMetaEl.hidden = true;
     dictLoopHint.hidden = true;
+    if (dictRateWrap) dictRateWrap.hidden = true;
   }
 
   function showDictReady() {
@@ -329,7 +425,6 @@
   }
 
   async function loadNextSession({ autoplay = true } = {}) {
-    if (dictStatsEl) { dictStatsEl.textContent = ""; dictStatsEl.hidden = true; }
     dictCheckBtn.disabled = true;
     dictNextBtn.disabled = true;
     dictResultEl.hidden = true;
@@ -348,6 +443,17 @@
         throw new Error(j.error || `HTTP ${r.status}`);
       }
       const data = await r.json();
+
+      // Everything mastered. Show the totals rather than the blank "no sessions"
+      // screen, which is what an unreachable backend looks like.
+      if (!data.sessionId) {
+        currentSession = null;
+        showDictEmpty("All sessions mastered — nothing due right now.");
+        if (data.stats) renderDictStats(data.stats);
+        dictNextBtn.disabled = false;
+        return;
+      }
+
       currentSession = {
         sessionId: data.sessionId,
         entryId: data.entryId,
@@ -357,6 +463,9 @@
         duration: Number(data.duration) || 0,
         wordCount: Number(data.wordCount) || 0,
         reference: String(data.reference || ""),
+        wpm: Number(data.wpm) || 0,
+        difficulty: Number(data.difficulty) || 0,
+        exhausted: !!data.exhausted,
         // Per-word ASR timings for this segment — the raw material for the A-B
         // loop below. [] from a backend that couldn't read the transcript.
         words: Array.isArray(data.words) ? data.words.map((w) => ({
@@ -373,8 +482,14 @@
       showDictReady();
       dictCheckBtn.disabled = false;
       dictNextBtn.disabled = false;
+      if (dictRateWrap) dictRateWrap.hidden = false;
       await ensureDictationAudio({ autoplay });
-      if (dictStatsEl) { dictStatsEl.textContent = ""; dictStatsEl.hidden = true; }
+      // Nothing is due and nothing is new — the learner is studying ahead of
+      // schedule. Say so, instead of silently re-serving finished material the
+      // way the old recycle branch did.
+      if (data.exhausted) {
+        flashLoopHint("All caught up — reviewing ahead of schedule");
+      }
       refreshDictationView();
     } catch (e) {
       console.error("dictation next failed", e);
@@ -474,10 +589,21 @@
       if (we > e) e = we;
     }
     if (!isFinite(s) || !isFinite(e)) { flashLoopHint("No word timings to loop"); return false; }
-    if (e - s < 0.05) e = s + AB_MIN;                    // ASR gave no real end → synthesize one
+    // The floor has to be a real audible length, not a test for exactly-zero.
+    // The transcriber squashes overlapping words to exactly 0.050 s, which is
+    // not < 0.05, so a tighter test never fired and left a window too short to
+    // hear.
+    if (e - s < AB_MIN_AUDIBLE) e = s + AB_MIN;
     e += AB_TAIL;
-    const next = words[b + 1];                           // …but never reach into the next word
-    if (next && isFinite(next.start)) e = Math.min(e, next.start);
+    // …but never reach into the next word — unless honouring that would leave
+    // nothing to play. In a collapsed-timestamp run every word shares one start,
+    // so this clamp used to drive e back to s, and dictLoopTick then reseeked on
+    // every animation frame with no audio ever advancing.
+    const next = words[b + 1];
+    if (next && isFinite(next.start) && next.start - s > AB_MIN_AUDIBLE) {
+      e = Math.min(e, next.start);
+    }
+    if (e - s < AB_MIN_AUDIBLE) e = s + AB_MIN;          // last resort: always playable
     abStart = s; abEnd = e;
     applyAbLoopMark();
     try { audioEl.currentTime = Math.max(0, abStart - AB_LEAD_IN); } catch {}
@@ -512,6 +638,7 @@
     // From here on dictation is driving the element, so Watch must stop
     // persisting its position (see window.__dictationOwnsAudio).
     dictOwnsAudio = true;
+    applyDictRate();
 
     if (sameEntry && audioEl.src) {
       try { audioEl.currentTime = Math.max(0, dStart - D_LOOP_LEAD_IN); } catch {}
@@ -542,6 +669,7 @@
       if (myLoad !== dictLoadSeq) return;                 // a newer session superseded this one
       if (audioEl.getAttribute("src") !== src) return;
       try { audioEl.currentTime = Math.max(0, dStart - D_LOOP_LEAD_IN); } catch {}
+      applyDictRate();   // a new src resets playbackRate to 1
       startDictLoop();
       if (autoplay) {
         const p = audioEl.play();
@@ -689,7 +817,17 @@
     // Clear grading numbers instantly on Next — don't wait for /complete or
     // /session round-trips (previous behavior kept 85% / WER visible until
     // loadNextSession's fetch completed). Capture score before clearing.
+    // Disable FIRST: the attempt POST below is awaited, and until loadNextSession
+    // runs the button is live with currentSession still pointing at the session
+    // just submitted. A second click in that window posts a phantom skipped
+    // attempt for it, and the log is append-only by design, so the junk row is
+    // permanent and depresses the item's novelty score for good.
+    if (dictNextBtn.disabled) return;
+    dictNextBtn.disabled = true;
+
     const scoreToSave = lastGrade && typeof lastGrade.score === "number" ? lastGrade.score : null;
+    // Captured here because the reset below runs before the attempt is posted.
+    const checkedThisSession = hasCheckedThisSession;
     dictScoreEl.hidden = true;
     dictPctEl.textContent = "—";
     dictPctEl.className = "pct";
@@ -701,22 +839,29 @@
     lastGrade = null;
     hasCheckedThisSession = false;
 
-    // Mark current session as done if the user at least interacted?
-    // Spec: "We must track which sessions already exist" — don't re-pick
-    // completed. Mark on Next regardless of whether they checked, so a
-    // skipped session also doesn't come back. Include score when available.
+    // Record the attempt. A session the learner never checked is reported as
+    // SKIPPED, not as a completion: the backend logs it and leaves the item
+    // schedulable. Marking on Next regardless — what this used to do — meant
+    // pressing Next twice while deciding what to study destroyed two items from
+    // a finite pool, indistinguishably from two genuine failures.
     if (currentSession) {
+      const skipped = !checkedThisSession;
       try {
-        await fetch(apiBase() + "/api/dictation/complete", {
+        const r = await fetch(apiBase() + "/api/dictation/complete", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             sessionId: currentSession.sessionId,
-            score: scoreToSave,
+            score: skipped ? null : scoreToSave,
+            skipped,
           }),
         });
+        if (r.ok) {
+          const j = await r.json().catch(() => null);
+          if (j && j.progress) renderDictStats(j.progress);
+        }
       } catch (e) {
-        console.warn("complete mark failed", e);
+        console.warn("attempt record failed", e);
       }
     }
     await loadNextSession();
