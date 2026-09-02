@@ -151,11 +151,14 @@
     const text = String(reference || "");
     const re = new RegExp(DICT_WORD_RE.source, DICT_WORD_RE.flags);
     let html = '';
-    let last = 0, m;
+    let last = 0, m, i = 0;
     while ((m = re.exec(text)) !== null) {
       if (m.index > last) html += escapeHtml(text.slice(last, m.index));
       const w = m[0];
-      html += `<span class="word dictation-ref-word" data-word="${escapeHtml(w)}">${escapeHtml(w)}</span>`;
+      // data-i even here, where there are no timings to loop: the explanation
+      // gesture indexes by it, and without it left-click/drag would silently do
+      // nothing on any session whose transcript could not be read.
+      html += `<span class="word dictation-ref-word" data-i="${i++}" data-word="${escapeHtml(w)}">${escapeHtml(w)}</span>`;
       last = re.lastIndex;
     }
     if (last < text.length) html += escapeHtml(text.slice(last));
@@ -283,11 +286,37 @@
       // Watch's end-of-track auto-replay restarts the whole recording.
       if (prevFeature === FEATURE_DICTATION) restoreWatchAudio();
     }
+    updateTabsVisibility();
     // Resize observer in Watch measures player height for --player-h; a feature
     // switch changes band content height, so nudge it.
     requestAnimationFrame(() => {
       try { window.dispatchEvent(new Event("resize")); } catch {}
     });
+  }
+
+  // The feature tabs overlay the video, so they must not sit on top of a movie.
+  // They belong to the library screen, where picking a feature makes sense; once
+  // an entry is playing the way out is the Library button in the player bar
+  // (goHome), not a tab pill floating over the picture.
+  //
+  // Driven off the library grid's own visibility — app-listen.js's setListen()
+  // does `libraryViewEl.hidden = state !== "idle"`, so "library visible" is
+  // exactly "nothing is playing". Observed rather than hooked, to keep the
+  // adaptation out of app-listen.js (see CLAUDE.md).
+  //
+  // Dictation always keeps the tabs: it hides the library grid wholesale via
+  // body.dictation-on, so hiding them there would strand the learner with no way
+  // back to Watch.
+  function updateTabsVisibility() {
+    if (!tabsEl) return;
+    const inDictation = currentFeature === FEATURE_DICTATION;
+    const libraryShowing = !!libraryViewEl && !libraryViewEl.hidden;
+    tabsEl.hidden = !(inDictation || libraryShowing);
+  }
+
+  if (libraryViewEl) {
+    new MutationObserver(updateTabsVisibility)
+      .observe(libraryViewEl, { attributes: true, attributeFilter: ["hidden"] });
   }
 
   function initFeature() {
@@ -913,15 +942,43 @@
   // as its options object and read autoplay off it.
   if (dictRetryBtn) dictRetryBtn.addEventListener("click", () => loadNextSession());
 
-  // Clicking a word in the Reference line triggers the explanation panel
-  // (same panel as Watch, via window.__dictationExplain exposed by app-listen.js).
-  if (dictRefEl) dictRefEl.addEventListener("click", (e) => {
-    const span = e.target.closest && e.target.closest(".dictation-ref-word");
-    if (!span) return;
-    const word = span.dataset.word || span.textContent || "";
-    const context = currentSession ? currentSession.reference : dictRefEl.textContent.replace(/^Reference:\s*/, "");
-    if (window.__dictationExplain) window.__dictationExplain(word, context);
-  });
+  // Explanation lookup on the Reference line: left-CLICK a word, or left-DRAG
+  // across several to ask about the whole phrase — the Watch caption's gesture
+  // (app-listen.js finishCaptionGesture), which this panel previously lacked.
+  // Driven off mousedown → mousemove → mouseup like the right-button loop below,
+  // rather than a click listener, so a drag and a click are distinguishable and
+  // the drag can paint a live preview.
+  function explainFromRange(a, b) {
+    if (!dictRefEl) return;
+    const lo = Math.min(a, b), hi = Math.max(a, b);
+    const parts = [];
+    for (const sp of dictRefEl.querySelectorAll(".dictation-ref-word")) {
+      const i = Number(sp.dataset.i);
+      if (isNaN(i) || i < lo || i > hi) continue;
+      const bare = sp.dataset.word || sp.textContent || "";
+      if (bare.trim()) parts.push(bare.trim());
+    }
+    const phrase = parts.join(" ");
+    if (!phrase) return;
+    const context = currentSession
+      ? currentSession.reference
+      : dictRefEl.textContent.replace(/^Reference:\s*/, "");
+    if (window.__dictationExplain) window.__dictationExplain(phrase, context);
+  }
+
+  function paintMarkRange(a, b) {
+    if (!dictRefEl) return;
+    const lo = Math.min(a, b), hi = Math.max(a, b);
+    for (const sp of dictRefEl.querySelectorAll(".dictation-ref-word")) {
+      const i = Number(sp.dataset.i);
+      sp.classList.toggle("marked", !isNaN(i) && i >= lo && i <= hi);
+    }
+  }
+
+  function clearMarkRange() {
+    if (!dictRefEl) return;
+    for (const sp of dictRefEl.querySelectorAll(".dictation-ref-word")) sp.classList.remove("marked");
+  }
 
   // Right-click a Reference word to loop it, right-press-and-drag across words to
   // loop the phrase — the Watch caption's gesture, on the dictation panel. The
@@ -947,17 +1004,29 @@
     dictRefEl.addEventListener("contextmenu", (e) => { e.preventDefault(); });
 
     dictRefEl.addEventListener("mousedown", (e) => {
-      if (e.button !== 2) return;
+      if (e.button !== 0 && e.button !== 2) return;
+      const span = e.target.closest && e.target.closest(".dictation-ref-word");
+
+      // LEFT press → mark a word/phrase for an explanation lookup. Must start on a
+      // word, and needs no word timings — an explanation is about the text.
+      if (e.button === 0) {
+        if (!span || span.dataset.i === undefined) return;
+        e.preventDefault();
+        const i = Number(span.dataset.i);
+        abDrag = { startIdx: i, currentIdx: i, moved: false, button: 0 };
+        paintMarkRange(i, i);
+        return;
+      }
+
       e.preventDefault();
       if (!currentSession || !(currentSession.words || []).length) {
         flashLoopHint("No word timings to loop");
         return;
       }
-      const span = e.target.closest && e.target.closest(".dictation-ref-word");
       // Right-pressing OFF a word leaves startIdx null; mousemove can still anchor
       // the drag on the first word it crosses, and a release that never did clears.
       const i = span && span.dataset.i !== undefined ? Number(span.dataset.i) : null;
-      abDrag = { startIdx: i, currentIdx: i, moved: false };
+      abDrag = { startIdx: i, currentIdx: i, moved: false, button: 2 };
       if (i != null) paintAbDragRange();
     });
 
@@ -965,17 +1034,21 @@
       if (!abDrag) return;
       if (e.buttons === 0) {   // a release we never saw — recover, don't keep a stale preview
         abDrag = null;
+        clearMarkRange();
         applyAbLoopMark();
         return;
       }
       const span = e.target.closest && e.target.closest(".dictation-ref-word");
       if (!span || span.dataset.i === undefined) return;
       const i = Number(span.dataset.i);
-      if (abDrag.startIdx == null) { abDrag.startIdx = abDrag.currentIdx = i; paintAbDragRange(); return; }
+      const repaint = abDrag.button === 0
+        ? () => paintMarkRange(abDrag.startIdx, abDrag.currentIdx)
+        : paintAbDragRange;
+      if (abDrag.startIdx == null) { abDrag.startIdx = abDrag.currentIdx = i; repaint(); return; }
       if (i === abDrag.currentIdx) return;
       abDrag.currentIdx = i;
       if (i !== abDrag.startIdx) abDrag.moved = true;
-      paintAbDragRange();
+      repaint();
     });
   }
 
@@ -983,6 +1056,17 @@
   window.addEventListener("mouseup", () => {
     if (!abDrag) return;
     const ds = abDrag; abDrag = null;
+
+    // LEFT release → fire the explanation for the marked word or phrase. Clearing
+    // the marks first, then repainting the loop, keeps a live A-B loop visible
+    // underneath a selection that has just been consumed.
+    if (ds.button === 0) {
+      clearMarkRange();
+      applyAbLoopMark();
+      if (ds.startIdx != null) explainFromRange(ds.startIdx, ds.currentIdx);
+      return;
+    }
+
     if (ds.startIdx == null) { clearAbLoop(); return; }   // right-clicked empty space → stop
     // A single right-click on the word already looping toggles the loop OFF.
     const w0 = ((currentSession && currentSession.words) || [])[ds.startIdx];

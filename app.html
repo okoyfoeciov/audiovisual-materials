@@ -928,6 +928,10 @@
      Feature tabs — Watch vs Daily Dictation. Floats in the empty space
      above the library/video/dictation main area, so it never pushes the
      film panels down (the user has "lots of space up there"). */
+  /* [hidden] has to beat display:flex, or hiding the tabs over a playing movie
+     does nothing. Third occurrence of this trap in this file — .dictation-stats,
+     .dictation-rate and .dictation-score all needed the same line. */
+  .feature-tabs[hidden] { display: none !important; }
   .feature-tabs {
     position: absolute;
     top: 10px;
@@ -1201,8 +1205,20 @@
     margin: 0 -2px;
     border-radius: 4px;
     transition: background 0.12s ease;
+    /* The panel drives its own drag off mousedown/mousemove, as the Watch caption
+       does. Without this the browser's native text selection runs at the same
+       time and fights it. */
+    user-select: none;
+    -webkit-user-select: none;
   }
   .dictation-ref .dictation-ref-word:hover { background: var(--word-hover, rgba(255,255,255,0.08)); }
+  /* Left-drag preview: the phrase about to be sent for an explanation. Distinct
+     from .looping so a drag never looks like it is setting an A-B loop. */
+  .dictation-ref .dictation-ref-word.marked,
+  .dictation-ref .dictation-ref-word.marked:hover {
+    background: var(--word-mark, rgba(255,255,255,0.20));
+    border-radius: 4px;
+  }
   /* A word inside the active A-B loop (right-click a word / right-drag a phrase),
      same accent tint + underline the Watch caption uses. Restated here rather than
      left to the shared .word.looping rule, which loses the cascade to
@@ -1327,6 +1343,21 @@
      deficit lands on the notepad. Let the panel yield once the notepad hits a
      floor that actually fits topbar + textarea + actions. */
   body.dictation-on .explain-panel { flex: 0 1 var(--panel-h, 60vh); }
+  /* An explanation panel is created on first use (makePanel) and never removed;
+     resetPanelThread only empties its content box. In Watch the video window
+     fills the band so an empty panel is invisible, but body.dictation-on hides
+     the video — leaving an empty 60vh slab that shoves the reference text far up
+     the screen. Switching back and forth between the views is exactly how you
+     hit it: one explanation anywhere, ever, and Dictation is permanently tall.
+     Collapse the panel while it holds nothing, handle included. */
+  body.dictation-on .explain-panel:has(> .explain-content:empty) {
+    flex-basis: 0;
+    min-height: 0;
+    border-top: none;
+  }
+  body.dictation-on .explain-panel:has(> .explain-content:empty) > .panel-resize {
+    display: none;
+  }
   body.dictation-on .dictation-view { min-height: min(280px, 40vh); }
   @media (max-width: 760px) {
     .feature-tabs { left: 16px; top: calc(10px + env(safe-area-inset-top)); }
