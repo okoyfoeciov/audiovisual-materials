@@ -985,7 +985,14 @@
   // right button doesn't drag-select natively (it fires 'contextmenu', suppressed
   // just below), so the whole gesture is driven off mousedown → mousemove → mouseup
   // ourselves, exactly as app-listen.js does for the caption.
-  let abDrag = null;
+  //
+  // The two gestures keep SEPARATE state. Sharing one slot discriminated by a
+  // button field meant a right press mid-left-drag overwrote it, stranding the
+  // .marked paint with no path left to clear it, and an undiscriminated window
+  // mouseup let the release of either button finish whichever gesture happened
+  // to be stored.
+  let abDrag = null;     // right button — A-B loop
+  let markDrag = null;   // left button — explanation lookup
 
   // Live preview while dragging: paint the range as it WOULD loop, without
   // committing it. Wiped by applyAbLoopMark() when the gesture ends.
@@ -1013,12 +1020,16 @@
         if (!span || span.dataset.i === undefined) return;
         e.preventDefault();
         const i = Number(span.dataset.i);
-        abDrag = { startIdx: i, currentIdx: i, moved: false, button: 0 };
+        markDrag = { startIdx: i, currentIdx: i, moved: false };
         paintMarkRange(i, i);
         return;
       }
 
       e.preventDefault();
+      // A right press abandons any left drag in progress — the learner has
+      // changed their mind about what this gesture is. Drop its paint here, or
+      // nothing downstream ever will.
+      if (markDrag) { markDrag = null; clearMarkRange(); }
       if (!currentSession || !(currentSession.words || []).length) {
         flashLoopHint("No word timings to loop");
         return;
@@ -1026,14 +1037,15 @@
       // Right-pressing OFF a word leaves startIdx null; mousemove can still anchor
       // the drag on the first word it crosses, and a release that never did clears.
       const i = span && span.dataset.i !== undefined ? Number(span.dataset.i) : null;
-      abDrag = { startIdx: i, currentIdx: i, moved: false, button: 2 };
+      abDrag = { startIdx: i, currentIdx: i, moved: false };
       if (i != null) paintAbDragRange();
     });
 
     dictRefEl.addEventListener("mousemove", (e) => {
-      if (!abDrag) return;
+      const ds = markDrag || abDrag;
+      if (!ds) return;
       if (e.buttons === 0) {   // a release we never saw — recover, don't keep a stale preview
-        abDrag = null;
+        markDrag = null; abDrag = null;
         clearMarkRange();
         applyAbLoopMark();
         return;
@@ -1041,31 +1053,35 @@
       const span = e.target.closest && e.target.closest(".dictation-ref-word");
       if (!span || span.dataset.i === undefined) return;
       const i = Number(span.dataset.i);
-      const repaint = abDrag.button === 0
-        ? () => paintMarkRange(abDrag.startIdx, abDrag.currentIdx)
+      const repaint = ds === markDrag
+        ? () => paintMarkRange(ds.startIdx, ds.currentIdx)
         : paintAbDragRange;
-      if (abDrag.startIdx == null) { abDrag.startIdx = abDrag.currentIdx = i; repaint(); return; }
-      if (i === abDrag.currentIdx) return;
-      abDrag.currentIdx = i;
-      if (i !== abDrag.startIdx) abDrag.moved = true;
+      if (ds.startIdx == null) { ds.startIdx = ds.currentIdx = i; repaint(); return; }
+      if (i === ds.currentIdx) return;
+      ds.currentIdx = i;
+      if (i !== ds.startIdx) ds.moved = true;
       repaint();
     });
   }
 
   // Released anywhere, so a drag that slips off the panel still commits.
-  window.addEventListener("mouseup", () => {
-    if (!abDrag) return;
-    const ds = abDrag; abDrag = null;
-
+  // Released anywhere, so a drag that slips off the panel still commits — but
+  // only the button that STARTED a gesture may finish it. Without that check the
+  // release of a right button pressed mid-left-drag was read as the end of the
+  // left gesture and fired a half-finished explanation.
+  window.addEventListener("mouseup", (e) => {
     // LEFT release → fire the explanation for the marked word or phrase. Clearing
     // the marks first, then repainting the loop, keeps a live A-B loop visible
     // underneath a selection that has just been consumed.
-    if (ds.button === 0) {
+    if (e.button === 0 && markDrag) {
+      const ds = markDrag; markDrag = null;
       clearMarkRange();
       applyAbLoopMark();
       if (ds.startIdx != null) explainFromRange(ds.startIdx, ds.currentIdx);
       return;
     }
+    if (e.button !== 2 || !abDrag) return;
+    const ds = abDrag; abDrag = null;
 
     if (ds.startIdx == null) { clearAbLoop(); return; }   // right-clicked empty space → stop
     // A single right-click on the word already looping toggles the loop OFF.

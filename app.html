@@ -1212,13 +1212,6 @@
     -webkit-user-select: none;
   }
   .dictation-ref .dictation-ref-word:hover { background: var(--word-hover, rgba(255,255,255,0.08)); }
-  /* Left-drag preview: the phrase about to be sent for an explanation. Distinct
-     from .looping so a drag never looks like it is setting an A-B loop. */
-  .dictation-ref .dictation-ref-word.marked,
-  .dictation-ref .dictation-ref-word.marked:hover {
-    background: var(--word-mark, rgba(255,255,255,0.20));
-    border-radius: 4px;
-  }
   /* A word inside the active A-B loop (right-click a word / right-drag a phrase),
      same accent tint + underline the Watch caption uses. Restated here rather than
      left to the shared .word.looping rule, which loses the cascade to
@@ -1228,6 +1221,22 @@
     box-shadow: inset 0 -2px 0 0 var(--accent);
     background: color-mix(in srgb, var(--accent) 16%, transparent);
     border-radius: 4px 4px 0 0;
+  }
+  /* Left-drag preview: the phrase about to be sent for an explanation, in the
+     same amber the Watch caption marks words with (--mark), so the two surfaces
+     read alike.
+
+     Declared AFTER .looping deliberately. Both selectors have identical
+     specificity, so order decides, and the loop paint would otherwise win the
+     background on any word that is both looping and selected — making the
+     preview invisible on exactly the words a learner is most likely to drag
+     across. .looping's inset underline is left alone, so such a word shows the
+     selection AND stays visibly inside the loop. */
+  .dictation-ref .dictation-ref-word.marked,
+  .dictation-ref .dictation-ref-word.marked:hover {
+    background: var(--mark);
+    color: var(--text);
+    border-radius: 4px;
   }
   /* Reference panel — the band's bottom-most item (order 1), "right up
      next" to the audio playback, in the same place as the Watch tab's
