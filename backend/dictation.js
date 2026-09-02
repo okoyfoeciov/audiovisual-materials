@@ -369,11 +369,48 @@ function stripChyrons(words) {
     let j = i;
     while (j < words.length && isAllCapsName(words[j].text)) j++;
     const runLen = j - i;
-    if (runLen >= 2 && looksLikeNameCard(words, i, j)) { i = j; continue; }
+    if (runLen >= 2 && looksLikeNameCard(words, i, j)) { i = skipTitleClauses(words, j); continue; }
     out.push(words[i]);
     i++;
   }
   return out;
+}
+
+// Words that appear inside an organisation name without being capitalised.
+const TITLE_GLUE = new Set(["the", "of", "for", "and", "at", "on", "in", "a", "an"]);
+
+/**
+ * After a name run, skip the job title and outlet that complete the lower third.
+ *
+ * The caption is "NICK TIMORES, Chief Economics Correspondent, The Wall Street
+ * Journal," and dropping only the name leaves the rest of the card in the
+ * reference — where the ASR has written the card's comma in place of the
+ * preposition the anchor actually spoke ("Correspondent FROM The Wall Street
+ * Journal"). A learner transcribing what they heard is then charged an insertion
+ * for being right.
+ *
+ * Only comma-delimited runs whose every word is capitalised (or organisation
+ * glue) are skipped, and a sentence end stops the scan, so ordinary speech
+ * following a name is kept.
+ */
+function skipTitleClauses(words, k) {
+  while (k < words.length) {
+    let e = k;
+    while (e < words.length && !/,$/.test(String(words[e].text || ""))) {
+      if (/[.!?…]['"’”)\]]?$/.test(String(words[e].text || ""))) return k;  // real speech
+      e++;
+    }
+    if (e >= words.length) return k;   // no closing comma — not a card segment
+    let isTitle = true;
+    for (let t = k; t <= e; t++) {
+      const w = String(words[t].text || "").replace(/[^A-Za-z]/g, "");
+      if (!w || TITLE_GLUE.has(w.toLowerCase())) continue;
+      if (!/^[A-Z]/.test(w)) { isTitle = false; break; }
+    }
+    if (!isTitle) return k;
+    k = e + 1;
+  }
+  return k;
 }
 
 /**

@@ -29,6 +29,7 @@
   const dictCheckBtn = document.getElementById("dictation-check");
   const dictRevealBtn = document.getElementById("dictation-reveal");
   const dictReplayBtn = document.getElementById("dictation-replay");
+  const dictLoopBtn = document.getElementById("dictation-loop");
   const dictNextBtn = document.getElementById("dictation-next");
   const dictScoreEl = document.getElementById("dictation-score");
   const dictPctEl = document.getElementById("dictation-pct");
@@ -100,6 +101,12 @@
   const LS_DICT_RATE = "av-dictation-rate";
   const DICT_RATE_MIN = 0.6, DICT_RATE_MAX = 1.0;
   let dictRate = 1.0;
+
+  // Continuous loop over the segment, off by default and persisted. The segment
+  // otherwise plays once and stops (6da3781); this makes repeating it a toggle
+  // rather than a click per repetition.
+  const LS_DICT_LOOP = "av-dictation-loop";
+  let dictLoopEnabled = false;
 
   function fmt(s) {
     s = Math.max(0, Math.floor(s || 0));
@@ -386,6 +393,28 @@
     applyDictRate();
   }
 
+  function setDictLoop(on, { persist = true } = {}) {
+    dictLoopEnabled = !!on;
+    if (dictLoopBtn) {
+      dictLoopBtn.classList.toggle("active", dictLoopEnabled);
+      dictLoopBtn.setAttribute("aria-pressed", dictLoopEnabled ? "true" : "false");
+      dictLoopBtn.title = dictLoopEnabled
+        ? "Looping this segment — click to play it once instead"
+        : "Loop this segment continuously";
+    }
+    if (persist) { try { localStorage.setItem(LS_DICT_LOOP, dictLoopEnabled ? "1" : "0"); } catch {} }
+    // Turning it on mid-segment should start looping now, not after the next
+    // manual play; the tick only runs while a loop is armed.
+    if (dictLoopEnabled && !audioEl.paused) startDictLoop();
+  }
+
+  (function initDictLoop() {
+    let saved = false;
+    try { saved = localStorage.getItem(LS_DICT_LOOP) === "1"; } catch {}
+    setDictLoop(saved, { persist: false });
+    if (dictLoopBtn) dictLoopBtn.addEventListener("click", () => setDictLoop(!dictLoopEnabled));
+  })();
+
   (function initDictRate() {
     let saved = 1.0;
     try { saved = Number(localStorage.getItem(LS_DICT_RATE)) || 1.0; } catch {}
@@ -424,7 +453,11 @@
     if (dictRefScroll) dictRefScroll.scrollTop = 0;
   }
 
-  async function loadNextSession({ autoplay = true } = {}) {
+  // autoplay defaults to FALSE: arriving at a new session should not start audio
+  // on its own. The learner decides when to listen — pressing Next while reading
+  // the previous answer used to blast the next clip immediately. Callers that
+  // genuinely want playback pass autoplay: true.
+  async function loadNextSession({ autoplay = false } = {}) {
     dictCheckBtn.disabled = true;
     dictNextBtn.disabled = true;
     dictResultEl.hidden = true;
@@ -527,10 +560,15 @@
     if (dLoopStart == null || dLoopEnd == null) return;
     const pos = audioEl.currentTime || 0;
     if (pos >= dLoopEnd - 0.02) {
-      // Auto-loop disabled: play once then pause and reset to start for
-      // next manual play. Previous code left playhead at dLoopEnd, so the
-      // next click on Play immediately hit this condition again and appeared
-      // to "switch off" instantly.
+      // With Loop on, rewind and keep playing. With it off, play once then pause
+      // and reset to the start for the next manual play — leaving the playhead
+      // at dLoopEnd instead would re-trigger this branch on the next Play click
+      // and look like the button had switched itself off.
+      if (dictLoopEnabled) {
+        try { audioEl.currentTime = Math.max(0, dLoopStart - D_LOOP_LEAD_IN); } catch {}
+        dLoopRAF = requestAnimationFrame(dictLoopTick);
+        return;
+      }
       try { audioEl.pause(); } catch {}
       try { audioEl.currentTime = Math.max(0, dLoopStart - D_LOOP_LEAD_IN); } catch {}
       return;
@@ -871,7 +909,9 @@
   if (dictCheckBtn) dictCheckBtn.addEventListener("click", checkCurrent);
   if (dictRevealBtn) dictRevealBtn.addEventListener("click", showRef);
   if (dictNextBtn) dictNextBtn.addEventListener("click", completeAndNext);
-  if (dictRetryBtn) dictRetryBtn.addEventListener("click", loadNextSession);
+  // Wrapped, not passed directly: as a listener it would receive the click Event
+  // as its options object and read autoplay off it.
+  if (dictRetryBtn) dictRetryBtn.addEventListener("click", () => loadNextSession());
 
   // Clicking a word in the Reference line triggers the explanation panel
   // (same panel as Watch, via window.__dictationExplain exposed by app-listen.js).

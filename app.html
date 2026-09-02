@@ -1131,6 +1131,14 @@
     border-color: var(--border);
   }
   .dictation-btn.ghost:hover:not(:disabled) { color: var(--text); border-color: var(--text-dim); }
+  /* [hidden] has to beat display, or the empty "—" pill shows whenever there is
+     no grade to report. Same trap as .dictation-stats and .dictation-rate. */
+  .dictation-score[hidden] { display: none !important; }
+  .dictation-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
   .dictation-score {
     display: inline-flex;
     align-items: center;
@@ -1398,6 +1406,8 @@
           <button class="dictation-btn primary" id="dictation-check" type="button">Check</button>
           <button class="dictation-btn ghost" id="dictation-reveal" type="button" hidden>Reveal transcript</button>
           <button class="dictation-btn ghost" id="dictation-replay" type="button" title="Replay loop from start">Replay</button>
+          <button class="dictation-btn ghost" id="dictation-loop" type="button" aria-pressed="false"
+                  title="Loop this segment continuously">Loop</button>
           <span class="dictation-score" id="dictation-score" hidden>
             <span class="pct" id="dictation-pct">—</span>
             <span class="detail" id="dictation-detail"></span>
