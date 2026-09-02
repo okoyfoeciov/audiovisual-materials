@@ -86,13 +86,11 @@ const dictation = require("./dictation");
 
 app.get("/api/dictation/stats", (req, res) => {
   try {
-    const all = dictation.getAllSessionsDetailed();
-    const { set } = dictation.getCompletedSet();
-    res.json({
-      total: all.length,
-      completed: set.size,
-      remaining: Math.max(0, all.length - set.size),
-    });
+    // Counted with the same resolver pickNextSession uses, so the number shown
+    // to the learner and the number governing selection cannot disagree. The
+    // old version subtracted set size from pool size, which silently
+    // undercounted once any completed id fell out of the pool.
+    res.json(dictation.getProgress());
   } catch (e) {
     res.status(500).json({ error: String(e.message || e) });
   }
@@ -101,7 +99,18 @@ app.get("/api/dictation/stats", (req, res) => {
 app.get("/api/dictation/session", (req, res) => {
   try {
     const pick = dictation.pickNextSession();
-    if (!pick || !pick.session) return res.status(404).json({ error: "No dictation sessions available." });
+    if (!pick) return res.status(404).json({ error: "No dictation sessions available." });
+    // An empty pool is a STATE, not an error: a learner who has mastered the
+    // corpus must see their totals, not the same blank screen an unreachable
+    // backend produces. 404 here erased the progress panel at exactly the moment
+    // it was most worth showing.
+    if (!pick.session) {
+      return res.json({
+        session: null,
+        exhausted: true,
+        stats: dictation.getProgress(),
+      });
+    }
     const s = pick.session;
     const entry = db.getEntry(s.entryId);
     res.json({
@@ -113,6 +122,8 @@ app.get("/api/dictation/session", (req, res) => {
       end: s.end,
       duration: s.duration,
       wordCount: s.wordCount,
+      wpm: s.wpm,
+      difficulty: dictation.difficulty(s),
       // Per-word ASR timings for this segment, so the client can loop a phrase
       // inside it (right-click / right-drag on a reference word). [] when the
       // transcript can't be read — the client falls back to segment-only replay.
@@ -122,7 +133,13 @@ app.get("/api/dictation/session", (req, res) => {
       // so a client that peeks early gains nothing.
       reference: s.text,
       exhausted: pick.exhausted,
-      stats: { total: pick.total, remaining: pick.remaining },
+      stats: {
+        total: pick.total,
+        remaining: pick.remaining,
+        unseen: pick.unseen,
+        due: pick.due,
+        retired: pick.retired,
+      },
     });
   } catch (e) {
     console.error("dictation session error", e);
@@ -163,21 +180,23 @@ app.post("/api/dictation/check", (req, res) => {
   }
 });
 
+// Records an attempt. Append-only, and NOT a retirement: a low score reschedules
+// the item for ~20 minutes' time rather than burning it, and `skipped: true`
+// (the learner pressed Next without checking) is logged without scheduling
+// anything at all. The route it replaces marked a session done on every Next,
+// which destroyed items from a finite pool at one keypress each.
 app.post("/api/dictation/complete", (req, res) => {
-  const { sessionId, score } = req.body || {};
+  const { sessionId, score, skipped } = req.body || {};
   if (!sessionId) return res.status(400).json({ error: "sessionId required." });
   try {
     const session = dictation.getSessionById(sessionId);
     if (!session) return res.status(404).json({ error: "Session not found." });
-    const ok = dictation.markCompleted(sessionId, session.entryId, {
-      wordStart: session.wordStart,
-      wordEnd: session.wordEnd,
-      text: session.text,
-      start: session.start,
-      end: session.end,
-      score: typeof score === "number" ? score : null,
-    });
-    res.json({ ok, alreadyCompleted: !ok });
+    const result = dictation.recordAttempt(
+      session,
+      typeof score === "number" ? score : null,
+      { skipped: !!skipped },
+    );
+    res.json({ ...result, progress: dictation.getProgress() });
   } catch (e) {
     console.error("dictation complete error", e);
     res.status(500).json({ error: String(e.message || e) });
