@@ -1238,53 +1238,46 @@
     color: var(--text);
     border-radius: 4px;
   }
-  /* Reference panel — the band's bottom-most item (order 1), "right up
-     next" to the audio playback, in the same place as the Watch tab's
-     explanation panel. Content-sized, NOT --panel-h like .explain-panel:
-     a reference is a sentence or two, so a fixed 60vh basis would strand
-     that line at the top of a half-empty slab. .dictation-ref-scroll's
-     max-height caps a long one, as .now-window's does for a long caption.
+  /* Reference panel — the dictation tab's caption, and it lives where Watch's
+     caption lives: INSIDE .player, first thing above the controls (the markup
+     sits right after #ln-now, which body.dictation-on hides). It used to be a
+     band panel: its own border-top, on the band's background, stacked above
+     the player's border-top — a separate slab with a hairline under it, never
+     the subtitle strip Watch shows. It was also floored at two lines with the
+     text sunk to the bottom (to stop the top edge jumping when a sentence
+     wrapped), which is what made a one-line sentence sit in a 92px box.
+     Watch accepts that jump — the caption grows with its line — and so does
+     this now.
 
-     Floored at two lines, and the text sits at the BOTTOM of that floor.
-     References run one or two lines, and letting the box shrink-wrap each of
-     them made the panel's top edge — and the reference text with it — jump
-     every time a sentence happened to wrap. (The player itself never moves:
-     it is the flex sibling BELOW the band, and the band, being flex: 1 1 auto,
-     absorbs every height change the panel makes.) Reserving the taller of the
-     two states kills that jump the same way .now-window's min-height does for
-     the caption, and the spare line then goes ABOVE the text — which holds the
-     LAST line a fixed distance above the player, so a short reference still
-     reads as a subtitle instead of hanging with a gap beneath it. The min-height terms, box-sizing being border-box: two of
-     .dictation-ref-scroll's line boxes (15.5px x 1.65), its 20px top and
-     bottom padding, and this panel's own 1px border.
-     justify-content is safe against the flex overflow-clipping trap here —
-     the panel shrink-wraps its only child, so there is free space to align
-     only while the text is short, never while it overflows. */
+     Every box metric on .dictation-ref-scroll is .now-window.reveal's: the
+     40px floor (one caption line), the 26vh cap, the -14px side margin against
+     .player's 16px gutter with the 14px side padding put back, 2px/9px vertical
+     padding, left-aligned. The type is .chunk.current's: serif 17px/1.55,
+     weight 600, --text. Watch also shows the previous line dimmed above the
+     current one; a dictation session is only its own sentence, so there is no
+     context line here. */
   .dictation-ref-panel {
-    flex: 0 0 auto;
-    min-height: calc(2 * 1.65 * 15.5px + 41px);
-    justify-content: flex-end;
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    border-top: 1px solid var(--border);
-    order: 1;
+    display: block;
   }
   .dictation-ref-panel[hidden] { display: none; }
   body:not(.dictation-on) .dictation-ref-panel { display: none !important; }
   .dictation-ref-scroll {
-    flex: 0 0 auto;
-    min-height: 0;
-    width: 100%;
-    max-height: 38vh;
+    min-height: 40px;
+    max-height: 26vh;
     overflow-y: auto;
     overscroll-behavior: contain;
-    padding: 20px 16px;
+    margin: 0 -14px;
+    padding: 2px 14px 9px;
+    text-align: left;
     font-family: var(--serif);
-    font-size: 15.5px;
-    line-height: 1.65;
-    font-weight: 700;
+    font-size: 17px;
+    line-height: 1.55;
+    font-weight: 600;
+    letter-spacing: 0;
     color: var(--text);
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
   }
   .dictation-ref-scroll::-webkit-scrollbar { width: 10px; }
   .dictation-ref-scroll::-webkit-scrollbar-thumb {
@@ -1293,8 +1286,9 @@
     border: 3px solid transparent;
     border-radius: 999px;
   }
-  /* When inside the anchored panel the reference loses its card chrome
-     and reads as plain panel content, mirroring .explain-content. */
+  /* Inside the caption slot the reference drops its card chrome (the base
+     .dictation-ref rule above still carries the padding/border/background it
+     had as a notepad card) and inherits .dictation-ref-scroll's caption type. */
   .dictation-ref-panel .dictation-ref {
     padding: 0;
     border: 0;
@@ -1327,9 +1321,10 @@
   /* Watch's subtitle caption is inside .player, and dictation deliberately keeps
      the player visible (audio-only). Both features also share one #ln-audio, so
      app-listen.js keeps painting Watch transcript lines into #ln-now against the
-     DICTATION clip's timeline — unrelated subtitles surfacing under the Reference
-     panel. .now-window:empty can't collapse it: the content is live, not stale.
-     Dictation has its own reference panel; Watch's caption has no place here. */
+     DICTATION clip's timeline — unrelated subtitles surfacing right above the
+     Reference line (the two share the caption slot in .player). .now-window:empty
+     can't collapse it: the content is live, not stale. Dictation has its own
+     reference caption; Watch's has no place here. */
   body.dictation-on .now-window { display: none !important; }
   /* Same story for the other Watch-owned things inside .player. The Library
      button is wired to Watch's goHome(), which tears the src off the SHARED
@@ -1373,12 +1368,6 @@
     .dictation-view { padding-left: 16px; padding-right: 16px; }
     .dictation-textarea { font-size: 16px; min-height: 120px; }
     .explain-band:has(.lib-list-back) .lib-list-back { left: 180px; }
-    .dictation-ref-panel {
-      position: sticky;
-      bottom: var(--player-h, 130px);
-      z-index: 10;
-      background: color-mix(in srgb, var(--bg) 55%, var(--surface));
-    }
   }
 </style>
 </head>
@@ -1461,16 +1450,6 @@
       </div>
     </div>
 
-    <!-- Dictation Reference panel — anchored directly above the player, in
-         the Watch tab's explanation-panel position (order 1). Right up next
-         to the audio playback. Sized to its text, so no drag handle: it
-         holds a sentence, and --panel-h belongs to the Watch panel. -->
-    <div class="dictation-ref-panel" id="dictation-ref-panel" hidden>
-      <div class="dictation-ref-scroll" id="dictation-ref-scroll">
-        <div class="dictation-ref" id="dictation-ref" hidden></div>
-      </div>
-    </div>
-
     <!-- Video stage — any library entry with hasVideo, desktop only. The
          <video> is MUTED and slaved to #ln-audio (the clock the transcript is
          aligned to), holds no blob — its src is a plain URL the browser
@@ -1497,6 +1476,15 @@
          markable; the LLM receives a 3-line window (those two plus the next
          line). -->
     <div class="now-window" id="ln-now" aria-live="polite"></div>
+    <!-- Dictation Reference — the dictation tab's caption, in the caption's
+         slot: the same box and type as #ln-now above (which body.dictation-on
+         hides, since app-listen.js keeps painting Watch lines into it). Shown
+         after Check → Reveal; see showDictRef in app-dictation.js. -->
+    <div class="dictation-ref-panel" id="dictation-ref-panel" hidden>
+      <div class="dictation-ref-scroll" id="dictation-ref-scroll">
+        <div class="dictation-ref" id="dictation-ref" hidden></div>
+      </div>
+    </div>
     <div class="ab-titlebar">
       <span class="ab-warn" id="ln-warn" hidden></span>
     </div>

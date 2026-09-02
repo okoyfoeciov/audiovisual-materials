@@ -477,6 +477,19 @@
   function showDictRef() {
     if (dictRefEl) dictRefEl.hidden = false;
     if (dictRefPanel) dictRefPanel.hidden = false;
+    // The reference lives inside .player, in the Watch caption's slot. On the
+    // narrow layout (app.html's max-width:760px rules) the player boots collapsed
+    // (body.player-collapsed, display:none) and only the floating broadcast
+    // button re-opens it — so a Reveal there would show nothing at all. Open
+    // the player the way that button does: its click runs app-listen.js's
+    // closure-private setPlayerCollapsed(false), which also re-measures
+    // --player-h. On desktop the class is inert and the player is never
+    // display:none, so this branch is never taken there.
+    if (playerEl && document.body.classList.contains("player-collapsed") &&
+        getComputedStyle(playerEl).display === "none") {
+      const fab = document.getElementById("ln-fab");
+      if (fab) fab.click();
+    }
     // Scroll the panel's content to top and bring panel into view
     if (dictRefPanel) dictRefPanel.scrollIntoView({ block: "nearest" });
     if (dictRefScroll) dictRefScroll.scrollTop = 0;
