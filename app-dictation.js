@@ -28,7 +28,6 @@
   const dictInput = document.getElementById("dictation-input");
   const dictCheckBtn = document.getElementById("dictation-check");
   const dictRevealBtn = document.getElementById("dictation-reveal");
-  const dictReplayBtn = document.getElementById("dictation-replay");
   const dictLoopBtn = document.getElementById("dictation-loop");
   const dictNextBtn = document.getElementById("dictation-next");
   const dictScoreEl = document.getElementById("dictation-score");
@@ -431,9 +430,13 @@
     if (dictLoopBtn) {
       dictLoopBtn.classList.toggle("active", dictLoopEnabled);
       dictLoopBtn.setAttribute("aria-pressed", dictLoopEnabled ? "true" : "false");
-      dictLoopBtn.title = dictLoopEnabled
+      const label = dictLoopEnabled
         ? "Looping this segment — click to play it once instead"
         : "Loop this segment continuously";
+      dictLoopBtn.title = label;
+      // The button is a bare icon in the player bar; without this the only name
+      // it has is the tooltip, which assistive tech does not read.
+      dictLoopBtn.setAttribute("aria-label", label);
     }
     // Turning it on mid-segment should start looping now, not after the next
     // manual play; the tick only runs while a loop is armed.
@@ -459,6 +462,9 @@
     dictEmptyMsg.textContent = msg || "No dictation sessions available.";
     dictEmptyEl.hidden = false;
     dictWrap.hidden = true;
+    // Loop lives in the player bar now, which stays up with no session loaded —
+    // the notepad wrap used to hide it for free. There is nothing to loop here.
+    if (dictLoopBtn) dictLoopBtn.disabled = true;
     dictMetaEl.hidden = true;
     dictLoopHint.hidden = true;
     if (dictRateWrap) dictRateWrap.hidden = true;
@@ -468,6 +474,7 @@
     dictEmptyEl.hidden = true;
     dictWrap.hidden = false;
     dictMetaEl.hidden = false;
+    if (dictLoopBtn) dictLoopBtn.disabled = false;
   }
 
   function hideDictRef() {
@@ -801,13 +808,6 @@
     });
   }
 
-  if (dictReplayBtn) dictReplayBtn.addEventListener("click", () => {
-    if (!currentSession) return;
-    try { audioEl.currentTime = Math.max(0, currentSession.start - D_LOOP_LEAD_IN); } catch {}
-    if (audioEl.paused) { const p = audioEl.play(); if (p && p.catch) p.catch(() => {}); }
-    startDictLoop();
-  });
-
   // The Watch ticker (150 ms) also re-arms a backgrounded loop; give
   // dictation the same safety via the same visibility hook (no extra work).
 
@@ -1126,10 +1126,10 @@
   // to stop looping". Exempt only the surfaces where a press IS the exercise:
   // the textarea, the graded word-diff, and the Reference panel (a left-click
   // there asks for an explanation of the very word you're looping). Deliberately
-  // NOT the whole notepad wrap — that contains Replay/Check/Reveal, and a Replay
-  // that can't clear the loop is swallowed by it: the seek to the segment start
-  // is yanked straight back to the looped word. Every button, and the player bar,
-  // keeps the "a press means move on" reading that Watch's → arrow has.
+  // NOT the whole notepad wrap — that contains Check/Reveal, and a press on one of
+  // those means the learner is done listening to the looped word. Every button, and
+  // the player bar, keeps the "a press means move on" reading that Watch's → arrow
+  // has.
   const LOOP_KEEP_SEL = "#dictation-input, #dictation-result, #dictation-ref-panel";
   document.addEventListener("mousedown", (e) => {
     if (e.button === 2) return;
