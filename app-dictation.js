@@ -515,6 +515,7 @@
     dictResultEl.innerHTML = "";
     hideDictRef();
     dictScoreEl.hidden = true;
+    closeExplanations();
     lastGrade = null;
     hasCheckedThisSession = false;
     dictInput.value = "";
@@ -863,6 +864,14 @@
     showDictRef();
   }
 
+  // Moving to the next session invalidates the old session's explanation —
+  // close the shared panel via Watch's teardown (aborts any in-flight stream).
+  function closeExplanations() {
+    if (typeof window.__dictationCloseExplanations === "function") {
+      try { window.__dictationCloseExplanations(); } catch {}
+    }
+  }
+
   async function checkCurrent() {
     if (!currentSession) return;
     const hypothesis = dictInput.value || "";
@@ -923,6 +932,10 @@
     dictResultEl.innerHTML = "";
     hideDictRef();
     dictRevealBtn.hidden = true;
+    // Old session's explanation is stale the moment Next is pressed — close it
+    // now, not after the /complete round trip below (same as the grading clear
+    // and loop-off above). loadNextSession closes again for the Retry path.
+    closeExplanations();
     lastGrade = null;
     hasCheckedThisSession = false;
     // Loop off at click time, not after the /complete round trip below: the

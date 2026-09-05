@@ -2476,4 +2476,10 @@
     const words = String(phrase).trim().split(/\s+/).filter(Boolean);
     triggerExplain(panel, [{ phrase: String(phrase).trim(), words }]);
   };
+
+  // Exposed for dictation: Next moves to a new session, so the old session's
+  // explanation is stale — close all panels (aborting any in-flight stream).
+  window.__dictationCloseExplanations = function() {
+    teardownAllPanels();
+  };
 })();
