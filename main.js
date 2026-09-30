@@ -18,7 +18,7 @@ function createWindow() {
     height: 860,
     minWidth: 480,
     minHeight: 480,
-    title: "Audiovisual Materials",
+    title: "Daily Dictation",
     icon: path.join(__dirname, "build", "icons", "256x256.png"),
     backgroundColor: "#181818", // matches app.html's <meta name="theme-color">
     show: false,
@@ -38,9 +38,9 @@ function createWindow() {
     },
   });
 
-  // Keep "Audiovisual Materials" as the OS window title — app.html's own <title>ComArt</title>
-  // is left untouched (it's part of the cloned page), so without this Electron's
-  // default page-title sync would rename the window to it after load.
+  // Keep "Daily Dictation" as the OS window title — app.html's own <title> is
+  // only the in-tab fallback, so without this Electron's default page-title
+  // sync would rename the window to it after load.
   win.on("page-title-updated", (event) => event.preventDefault());
 
   // Wait for ready-to-show so the window appears already maximized instead of
@@ -90,10 +90,10 @@ ipcMain.handle("window:is-maximized", (event) => {
 });
 
 app.whenReady().then(async () => {
-  // Embedded media-library backend (single app, local-only). The asar bundle
+  // Embedded dictation backend (single app, local-only). The asar bundle
   // is read-only and ships no library, so packaged builds keep their data in
   // <userData>/library; dev runs (`electron .` from source) keep using
-  // <repo>/library, which is also what the import/pbs-sync CLIs default to.
+  // <repo>/library, which is also what the pbs-sync CLI defaults to.
   const libraryDir = app.isPackaged
     ? path.join(app.getPath("userData"), "library")
     : path.join(__dirname, "library");
@@ -102,10 +102,10 @@ app.whenReady().then(async () => {
   } catch (err) {
     const code = err && err.code;
     const detail = code === "EADDRINUSE"
-      ? `Port ${backend.DEFAULT_PORT} is already in use — another copy of this app (or the retired standalone "node backend/server.js" / av-materials.service) is still running. Stop it and relaunch.`
+      ? `Port ${backend.DEFAULT_PORT} is already in use — another copy of this app (or a standalone "node backend/server.js") is still running. Stop it and relaunch.`
       : String((err && err.message) || err);
     console.error(`embedded backend failed to start: ${detail}`);
-    dialog.showErrorBox("Audiovisual Materials — backend failed to start", detail);
+    dialog.showErrorBox("Daily Dictation — backend failed to start", detail);
     app.quit();
     return;
   }

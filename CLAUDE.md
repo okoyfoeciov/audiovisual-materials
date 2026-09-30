@@ -1,4 +1,4 @@
-# CLAUDE.md — audiovisual-materials
+# CLAUDE.md — daily-dictation
 
 Guidance for Claude Code (and any other agent) working in this repository.
 
@@ -117,19 +117,29 @@ anything matching it) must never be committed. Everything else — including
 
 ### About this project
 
-An Electron desktop clone of comart's "Listen" audio playback feature,
-repurposed to browse and play a personal media library (movies, audio,
-podcasts) served by this app's own local backend rather than comart.
-`app-listen.js` is the cloned page, adapted for the library; `app-base.js` is
-the one file that resolves the API base URL (see its own header comment) —
-originally comart's, now this app's embedded backend (`main.js` starts
-`backend/server.js` in-process on loopback; library lives in `<repo>/library`
-in dev, `<userData>/library` packaged — see `backend/paths.js`), with the
-same synchronous shape comart's version used (adapted
-from `chrome.storage`, since this page has no origin exemption comart's
-extension gets). `main.js` is the Electron shell. Avoid changing
-`app-listen.js` unless the task requires it — keep adaptations isolated to
-`app-base.js`/`main.js` so the diff against comart's original stays legible.
+A dictation-only Electron desktop app: daily dictation sessions cut from PBS
+NewsHour segments (audio-only, 1–2 sentences per session, looped), with
+WER-based grading, SM-2 spaced scheduling, and click-a-word AI explanations.
+The Watch feature (library grid, video stage, transcript caption, per-entry
+progress) was removed in 2026-09; only the PBS corpus under
+`library/collections/pbs-newshour*` + `library/movies/*` remains, and the only
+media route left is `GET /api/library/:id/stream`, which serves the segment
+audio the dictation loop plays inside of.
+
+`app-player.js` owns the shared `<audio>` transport (play/pause/seek/time,
+mobile collapse, keyboard) and the explanation panel (via `/api/explain`,
+`/api/pron`, `/api/credits`, all proxied to comart); `app-dictation.js` owns
+the notepad UI, the session loop, and grading, and reaches the panel through
+`window.__dictationExplain` / `window.__dictationCloseExplanations`.
+`app-base.js` resolves the API base URL (see its own header comment) — this
+app's embedded backend (`main.js` starts `backend/server.js` in-process on
+loopback; library lives in `<repo>/library` in dev, `<userData>/library`
+packaged — see `backend/paths.js`). `backend/dictation.js` holds the session-partition algorithm, the scheduler,
+and the WER grader. `backend/pbs-sync.js` (cron, daily) pulls new PBS
+segments with verbatim Crisper transcription; the Parakeet "clean" path in
+`backend/transcribe.js` is unused since the film library went away.
+`main.js` is the Electron shell. Avoid changing `app-player.js`'s explanation
+engine unless the task requires it.
 
 ## Packaging
 
@@ -155,7 +165,7 @@ from them or expects them.
 
 ```
 npm install
-npm run dist:linux   # → dist/audiovisual-materials_<version>_amd64.deb
+npm run dist:linux   # → dist/daily-dictation_<version>_amd64.deb
 npm run dist:mac     # → dist/*.dmg (plus a .zip side-artifact) — Mac only, see below
 ```
 

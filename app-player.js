@@ -1,15 +1,15 @@
 (function () {
   "use strict";
 
-  /* Listen — a synced 3-sentence transcript window and word-by-word
-     explanations over media served from this app's own local media-library
-     backend. Pick an entry from the library and it streams straight from
-     /api/library/:id/stream (range-requested, so seeking works); the backend
-     transcribes new imports once, up front, via the self-hosted Parakeet STT
-     service, and this page just polls /api/library/:id/transcript until it's
-     ready. Playback position is saved server-side per entry, so a relaunch
-     resumes where you left off. Wrapped in its own IIFE so it can't collide
-     with the exscriptor script above. */
+  /* Player — a dictation-only audio transport + AI-explanation engine.
+     Owned by Daily Dictation (app-dictation.js): it shares this file's <audio>
+     element and bottom player bar (play/pause/seek/time/back-fwd/collapse/
+     keyboard/ticker), and drives explanations through window.__dictationExplain
+     (single panel, drill-down rounds, pronunciation badges, credits warning).
+     There is no library grid, no caption, no stored progress and no picture
+     here — dictation sets the audio source itself and this file just plays it.
+     Wrapped in its own IIFE so it can't collide with the exscriptor script
+     above. */
 
   /* ---------- render helpers ---------- */
 
@@ -169,37 +169,16 @@
 
   /* ---------- DOM ---------- */
 
-  const nowWindow = document.getElementById("ln-now");
   const bandEl = document.getElementById("ln-explain-band");
-  const bandLoadingEl = document.getElementById("ln-band-loading");
 
-  // The explanation band is the page's always-on main region (it fills the area
-  // above the player), so it's never hidden — only its contents change. This
-  // helper just manages the caption by playback state:
-  //   idle    — nothing loaded: caption empty (open a file via the bar button).
-  //   loading — file opened, transcript generating: spinner in the caption spot.
-  //   active  — transcript ready: caption shows the current line (buildWindow).
-  function setListen(state) {
-    bandLoadingEl.hidden = true;   // retired: the spinner now lives in the caption
-    libraryViewEl.hidden = state !== "idle";
-    if (state === "idle") {
-      nowWindow.innerHTML = "";
-      renderLibraryGrid(libraryViewEl, libraryEntries);
-    } else if (state === "loading") {
-      showWindowStatus("", "loading");   // spinner at the current-line spot
-    }
-  }
   const warnEl = document.getElementById("ln-warn");
   const playerEl = document.getElementById("ln-player");
   const bar = document.getElementById("ln-bar");
-  const openBtn = document.getElementById("ln-open");      // bar's "Library" button
-  const libraryViewEl = document.getElementById("ln-library-view");
   const playBtn = document.getElementById("ln-play");
   const backBtn = document.getElementById("ln-back");   // mobile ←: jump −5s
   const fwdBtn = document.getElementById("ln-fwd");      // mobile →: jump +5s
   const collapseBtn = document.getElementById("ln-collapse"); // mobile: hide the player
   const fabEl = document.getElementById("ln-fab");            // mobile: floating "show player" button
-  const BASE_TITLE = document.title;   // restored when no file is loaded
   const trackEl = document.getElementById("ln-track");
   const fillEl = document.getElementById("ln-fill");
   const timeEl = document.getElementById("ln-time");
@@ -207,8 +186,6 @@
 
   /* ---------- state ---------- */
 
-  let currentEntry = null;         // the loaded library entry (for the tab title, progress URL, …)
-  let transcriptToken = 0;
   let ticker = null;
   // While a programmatic seek (arrow keys / track click) is in flight, Chrome
   // keeps reporting the OLD audioEl.currentTime until the seek actually lands.
@@ -219,43 +196,6 @@
   let seekTarget = null;
   function effPos() { return seekTarget != null ? seekTarget : (audioEl.currentTime || 0); }
 
-  // An A-B LOOP over the caption: right-click a word to loop just that word, or
-  // right-press-and-drag across words to loop the phrase. loopStart/loopEnd are
-  // plain numbers (SECONDS), NOT DOM nodes — the caption repaints every 150ms and
-  // shows only two lines, so a looped word's span is transient; the timestamps are
-  // stable. While a loop is set and the clip is playing, a requestAnimationFrame
-  // watcher (loopTick) seeks back to loopStart each time playback reaches loopEnd.
-  // Both null = no loop. Only settable in reveal mode, where each word span carries
-  // a data-start/data-end (see paintWindow). This supersedes the older manual
-  // "checkpoint" (which pinned one word so ← replayed it) — the loop does it
-  // automatically. Cleared by right-clicking off a word, right-clicking the same
-  // looped word again, Esc, forward-seeking past it, or loading a new clip.
-  let loopStart = null, loopEnd = null;
-  // Small pads so a word loop doesn't clip its own onset or bleed the next word's
-  // attack — ASR word boundaries are estimates. Tunable.
-  const LOOP_LEAD_IN = 0.03;    // begin this many seconds before loopStart (don't clip the onset)
-  const LOOP_TAIL = 0.12;       // play this far PAST the word's end so the last syllable ("…tion") finishes
-  const LOOP_MIN = 0.35;        // floor length when the ASR reports end == start (degenerate)
-
-  // Word timestamps from any ASR are an after-the-fact estimate, so on long audio
-  // they can drift. One reader control softens that:
-  //   syncOffset — nudge the timing (] earlier / [ later) to cancel a constant
-  //               lead/lag. In SECONDS; positive lights words sooner. Persists.
-  // The line-switching always runs off sentence starts; the offset shifts the
-  // DISPLAY clock only (not the seek math, which stays on effPos).
-  let syncOffset = Number(localStorage.getItem("zx-offset")) || 0;
-  function syncTime() { return effPos() + syncOffset; }
-
-  // transcript → sentence chunks + the 3-sentence window
-  let chunks = [], chunkIndex = 0, synced = true;
-  // True once a transcript carries per-word timings; drives the word-by-word
-  // caption reveal (karaoke). Stays false for word-less transcripts, which show
-  // whole lines because there is nothing to reveal against.
-  let wordReveal = false;
-  // The karaoke reveal is always on when the transcript HAS word timings — there
-  // is no toggle to turn it off.
-  function revealActive() { return wordReveal; }
-  let tokens = [], windowLayout = [], frozen = false;
 
   // A single explanation panel off the caption (O). Each new O
   // selection refreshes it (overrides the previous one); inside it the answers
@@ -274,247 +214,8 @@
   // the fallback badge when Merriam-Webster has no pronunciation for the word.
   let llmIpaByWord = new Map();
 
-  /* ---------- transcript → chunks ---------- */
-
-  function buildChunks(lines) {
-    const out = [];
-    let cur = null;
-    for (const ln of lines) {
-      const txt = (ln.text || "").trim();
-      if (!txt) continue;
-      if (!cur) cur = { text: txt, start: ln.start || 0 };
-      else cur.text += " " + txt;
-      const ended = /[.!?…]['")\]]?$/.test(txt);
-      if (ended || cur.text.split(/\s+/).length >= 30) { out.push(cur); cur = null; }
-    }
-    if (cur) out.push(cur);
-    return out;
-  }
-
-  // When per-word timings are available, group the words themselves into the
-  // same sentence chunks — so every chunk carries its words[] with start/end,
-  // which the caption uses to reveal each word as it's spoken.
-  function buildChunksFromWords(words) {
-    const out = [];
-    let cur = null;
-    for (const w of words) {
-      const value = String(w.text || "").trim();
-      if (!value) continue;
-      const start = Number(w.start) || 0;
-      const end = Number(w.end) || start;
-      if (!cur) cur = { start, words: [] };
-      cur.words.push({ value, start, end });
-      const ended = /[.!?…]['")\]]?$/.test(value);
-      if (ended || cur.words.length >= 30) {
-        cur.text = cur.words.map((x) => x.value).join(" ");
-        out.push(cur);
-        cur = null;
-      }
-    }
-    if (cur) {
-      cur.text = cur.words.map((x) => x.value).join(" ");
-      out.push(cur);
-    }
-    return out;
-  }
-
-  function syncWindow() {
-    if (!synced || !chunks.length) return;
-    const t = syncTime();
-    if (typeof t !== "number" || !isFinite(t)) return;
-    let lo = 0, hi = chunks.length - 1, idx = 0;
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      if (chunks[mid].start <= t) { idx = mid; lo = mid + 1; }
-      else hi = mid - 1;
-    }
-    if (idx !== chunkIndex) { chunkIndex = idx; buildWindow(); }
-  }
-
-  // Tokenize ONE chunk into `tokens` and register it as a `windowLayout` part
-  // under `cls`. Shared by the three displayed lines (the two preceding ones +
-  // the current). Every word becomes a markable .word span, so the preceding
-  // lines are now clickable too — not just passive context.
-  function pushChunkTokens(ch, cls) {
-    if (!ch) return;
-    const from = tokens.length;
-    if (revealActive() && ch.words) {
-      // Render ONE span per timed word, with a single space between them.
-      // This gives each word its exact start/end (no index drift) and keeps
-      // any punctuation INSIDE the word's span — so a "$" or "." hides along
-      // with its word instead of floating as an always-visible separator.
-      ch.words.forEach((w, k) => {
-        if (k > 0) tokens.push({ type: "sep", value: " " });
-        tokens.push({ type: "word", value: w.value, marked: false, start: w.start, end: w.end });
-      });
-    } else {
-      // Word-less transcript: split the sentence and show it all at once.
-      for (const t of tokenize(ch.text)) {
-        tokens.push(t.type === "word"
-          ? { type: "word", value: t.value, marked: false, start: null, end: null }
-          : { type: "sep", value: t.value });
-      }
-    }
-    windowLayout.push({ cls, from, to: tokens.length });
-  }
-
-  function buildWindow() {
-    // The caption shows two lines — the previous and the current — both markable.
-    // The previous line is dimmed (see the .chunk.context CSS) but fully
-    // interactive. The model receives the prev/current/next window — see
-    // visibleChunkText.
-    tokens = []; windowLayout = [];
-    pushChunkTokens(chunks[chunkIndex - 1], "chunk context");
-    pushChunkTokens(chunks[chunkIndex], "chunk current");
-    paintWindow();
-  }
-
-  function paintWindow() {
-    let html = "";
-    for (const part of windowLayout) {
-      let inner = "";
-      for (let i = part.from; i < part.to; i++) {
-        const t = tokens[i];
-        if (t.type === "word") {
-          const timing = t.start != null
-            ? ` data-start="${t.start}" data-end="${t.end}"` : "";
-          inner += `<span class="word${t.marked ? " marked" : ""}" data-i="${i}"${timing}>${escapeHtml(t.value)}</span>`;
-        } else inner += escapeHtml(t.value);
-      }
-      html += `<p class="${part.cls}">${inner}</p>`;
-    }
-    const prevScroll = nowWindow.scrollTop;
-    nowWindow.innerHTML = html;
-    // Reveal mode hides unspoken words; toggle the class so word-less
-    // transcripts keep showing the whole line at once.
-    nowWindow.classList.toggle("reveal", revealActive());
-    // updateReveal applies the .spoken classes, so in reveal mode the caption's
-    // real height is only settled AFTER it runs — anchor the scroll afterwards,
-    // not before (measuring earlier reads a collapsed, all-words-hidden box).
-    updateReveal();
-    applyLoopMark();         // re-mark the looped words after the rebuild
-    // Bottom-anchor so the current line (at the bottom, with the context line
-    // above) stays in view as the content changes. A no-op when it all fits.
-    // But while the user is marking (frozen), a repaint only restyles the
-    // SAME words — so restore their scroll instead of yanking it, otherwise a
-    // drag over an overflowing caption would jump on every step. We set the
-    // caption's OWN scrollTop (not scrollIntoView, which would jolt the page).
-    nowWindow.scrollTop = frozen ? prevScroll : nowWindow.scrollHeight;
-  }
-
-  // Walk the rendered words and flip each to spoken / speaking based on the
-  // current playback time. Cheap enough to run on the 150 ms ticker.
-  function updateReveal() {
-    if (!revealActive()) return;
-    const t = syncTime();
-    const spans = nowWindow.querySelectorAll(".word");
-    for (const sp of spans) {
-      const s = parseFloat(sp.dataset.start);
-      if (isNaN(s)) { sp.classList.add("spoken"); continue; }
-      if (t >= s) {
-        const e = parseFloat(sp.dataset.end);
-        sp.classList.add("spoken");
-        sp.classList.toggle("speaking", !isNaN(e) && t < e);
-      } else {
-        sp.classList.remove("spoken", "speaking");
-      }
-    }
-    // In reveal mode the line grows word-by-word between repaints, so paint-time
-    // bottom-anchoring isn't enough — re-anchor here each tick to keep the newest
-    // words in view if a long line overflows (likelier now that the context line
-    // eats into the 26vh budget). A no-op when the caption fits. Skipped while
-    // frozen so we don't fight the user's scroll as they hover to mark.
-    if (!frozen) nowWindow.scrollTop = nowWindow.scrollHeight;
-  }
-
-  // Mark every on-screen word inside the active loop [loopStart, loopEnd) with the
-  // .looping class (matched by start time, so it re-attaches to the freshly-rendered
-  // spans after every repaint). A no-op when no loop is set, or when the looped line
-  // has scrolled out of the two-line window — the loop still runs; it just isn't
-  // visible until that line returns.
-  function applyLoopMark() {
-    const spans = nowWindow.querySelectorAll(".word");
-    for (const sp of spans) {
-      const s = parseFloat(sp.dataset.start);
-      sp.classList.toggle("looping",
-        loopStart != null && !isNaN(s) && s >= loopStart - 0.001 && s < loopEnd - 0.001);
-    }
-  }
-
-  // ---- the loop engine ----
-  // A requestAnimationFrame watcher (~16ms) — far finer than the 150ms caption
-  // ticker or 'timeupdate' (~4/s), which would let a short word overshoot its end by
-  // up to a beat before we caught it. It runs ONLY while a loop is set and the clip
-  // is playing, and stops itself (returns without rescheduling) the moment the loop
-  // is cleared or playback pauses; the 'play' listener restarts it on resume.
-  let loopRAF = null;
-  function loopTick() {
-    loopRAF = null;
-    if (loopStart == null || loopEnd == null) return;              // no loop → stop
-    if (!audioEl.src || audioEl.paused || audioEl.error) return;   // not playing → stop (play restarts us)
-    // Don't stack a second seek while one is still landing (seekTarget != null) —
-    // effPos() already reads the pending target, so we'd re-fire every frame otherwise.
-    if (seekTarget == null && effPos() >= loopEnd) {
-      seekTo(Math.max(0, loopStart - LOOP_LEAD_IN));
-    }
-    loopRAF = requestAnimationFrame(loopTick);
-  }
-  function startLoopWatch() { if (loopRAF == null) loopRAF = requestAnimationFrame(loopTick); }
-
-  // Set the loop to cover caption tokens [i0..i1] (a single word when i0===i1). Reads
-  // the raw ASR start/end off the tokens (which survive repaints — read BEFORE any
-  // seek/repaint below), jumps to the start, and starts playing so the loop is
-  // audible at once. Returns false + hints if the range has no timings (a word-less
-  // transcript can't be looped).
-  function setLoopFromTokens(i0, i1) {
-    const a = Math.min(i0, i1), b = Math.max(i0, i1);
-    let s = Infinity, e = -Infinity;
-    for (let k = a; k <= b; k++) {
-      const t = tokens[k];
-      if (!t || t.type !== "word" || t.start == null) continue;
-      if (t.start < s) s = t.start;
-      const te = (t.end != null && t.end > t.start) ? t.end : t.start;
-      if (te > e) e = te;
-    }
-    if (!isFinite(s) || !isFinite(e)) { flashHint("This transcript has no word timings to loop"); return false; }
-    // Start of the first timed word AFTER the selection (in the current window), so a
-    // loop never bleeds into the next word — neither its audio nor its highlight.
-    let nextStart = null;
-    for (let k = b + 1; k < tokens.length; k++) {
-      const t = tokens[k];
-      if (t && t.type === "word" && t.start != null) { nextStart = t.start; break; }
-    }
-    if (e - s < 0.05) e = s + LOOP_MIN;                     // ASR gave NO real end (end == start) → synthesize one
-    e += LOOP_TAIL;                                         // let the final syllable finish before looping back
-    if (nextStart != null) e = Math.min(e, nextStart);     // …but never reach into the next word
-    loopStart = s; loopEnd = e;
-    applyLoopMark();
-    seekTo(Math.max(0, loopStart - LOOP_LEAD_IN));                          // jump to the loop…
-    if (audioEl.paused) { const p = audioEl.play(); if (p && p.catch) p.catch(() => {}); }  // …and play it now
-    startLoopWatch();
-    return true;
-  }
-  function clearLoop() {
-    if (loopStart == null && loopEnd == null) return;
-    loopStart = null; loopEnd = null;
-    applyLoopMark();     // the highlight vanishing is the feedback; loopTick self-stops next frame
-  }
-
-  function showWindowStatus(message, kind) {
-    let html = '<div class="window-status' + (kind === "error" ? " error" : "") + '">';
-    if (kind === "loading") html += '<div class="spinner"></div>';
-    if (message) html += `<p>${escapeHtml(message)}</p>`;
-    html += "</div>";
-    nowWindow.innerHTML = html;
-  }
-
   /* ---------- word marking → instant explain ---------- */
 
-  // A click on a caption word, or a drag across several, fires an explanation
-  // straight away (no more "mark, then move the mouse out"). While the gesture
-  // is in progress we freeze the caption (the 150ms ticker skips syncWindow
-  // when `frozen`) so playback can't rebuild the line mid-drag and lose marks.
-  let dragState = null, overCaption = false;
 
   // ---- touch drag-select (mobile) ----
   // Desktop selects words by mouse drag. Touch has no equivalent: a finger drag
@@ -613,186 +314,8 @@
     }, { passive: false });
   }
 
-  // Freeze the caption ONLY during an active click/drag (mousedown→mouseup), so a
-  // pick can't drift under the cursor mid-gesture. Merely HOVERING must NOT
-  // freeze it — that made the line stop following the audio (and look "stuck"
-  // forever) whenever the mouse rested over the reading area. We still track
-  // overCaption so a drag that slips outside doesn't lose its selection.
-  nowWindow.addEventListener("mouseenter", () => { overCaption = true; });
-  nowWindow.addEventListener("mouseleave", () => { overCaption = false; if (!dragState) frozen = false; });
-  nowWindow.addEventListener("mousedown", (e) => {
-    if (mouseSuppressed()) return;   // ignore the synthetic click trailing a touch gesture
-    if (e.button !== 0 && e.button !== 2) return;
-    const span = e.target.closest && e.target.closest(".word");
-    // LEFT press → mark a word/phrase for an explanation lookup. Must start on a word.
-    if (e.button === 0) {
-      if (!span) return;
-      e.preventDefault();
-      frozen = true;
-      const i = Number(span.dataset.i);
-      dragState = { startIdx: i, currentIdx: i, moved: false, button: 0, snapshot: tokens.map((t) => !!t.marked) };
-      return;
-    }
-    // RIGHT press → set an A-B loop; a right-DRAG extends it across words. Browsers
-    // don't drag-select with the right button natively (it fires 'contextmenu', which
-    // the handler below suppresses), so we drive the whole gesture off this
-    // mousedown → mousemove → mouseup ourselves. Right-pressing OFF a word (startIdx
-    // stays null) clears any loop in finishCaptionGesture.
-    e.preventDefault();
-    frozen = true;
-    const i = span ? Number(span.dataset.i) : null;
-    dragState = { startIdx: i, currentIdx: i, moved: false, button: 2, snapshot: tokens.map((t) => !!t.marked) };
-    if (i != null) applyDragRange();   // live preview: highlight the word as it would loop
-  });
-  nowWindow.addEventListener("mousemove", (e) => {
-    if (!dragState) return;
-    if (e.buttons === 0) {   // a button-release we never saw — recover, don't stay frozen with marks
-      dragState = null; frozen = false;
-      for (const tk of tokens) if (tk.type === "word") tk.marked = false;
-      repaintMarks();
-      return;
-    }
-    const span = e.target.closest && e.target.closest(".word");
-    if (!span) return;
-    const i = Number(span.dataset.i);
-    if (dragState.startIdx == null) {   // right-drag that began off a word: anchor it here
-      dragState.startIdx = dragState.currentIdx = i;
-      applyDragRange();
-      return;
-    }
-    if (i === dragState.currentIdx) return;
-    dragState.currentIdx = i;
-    if (i !== dragState.startIdx) dragState.moved = true;
-    applyDragRange();
-  });
-  function finishCaptionGesture() {
-    if (!dragState) return;
-    const ds = dragState; dragState = null;
 
-    // RIGHT gesture → set / clear the A-B loop (no explanation lookup). Drop the drag
-    // preview marks and unfreeze first, then read the range off the (still-current)
-    // tokens.
-    if (ds.button === 2) {
-      for (const tk of tokens) if (tk.type === "word") tk.marked = false;
-      frozen = false;
-      if (ds.startIdx == null) { clearLoop(); paintWindow(); return; }   // right-clicked empty space → stop
-      const t0 = tokens[ds.startIdx];
-      // A single right-click on the word that's already looping toggles the loop OFF.
-      if (!ds.moved && t0 && t0.type === "word" && loopStart != null &&
-          t0.start != null && Math.abs(t0.start - loopStart) < 0.001) {
-        clearLoop(); paintWindow(); return;
-      }
-      setLoopFromTokens(ds.startIdx, ds.currentIdx);
-      paintWindow();
-      return;
-    }
 
-    // LEFT gesture → mark words and fire an explanation (original behavior).
-    if (ds.moved) applyDragRange(ds);             // final drag range → marked
-    else {
-      const t = tokens[ds.startIdx];
-      if (t && t.type === "word") t.marked = true; // a plain click selects the word
-    }
-    const items = collectMarkedItems();
-    // Clear the caption marks so the next click/drag starts a fresh selection
-    // (which fills the next panel), then fire this one. The gesture is over, so
-    // unfreeze and let the caption resume following the audio.
-    for (const tk of tokens) if (tk.type === "word") tk.marked = false;
-    frozen = false;
-    paintWindow();
-    if (items.length) startNewExplain(items);
-  }
-  window.addEventListener("mouseup", finishCaptionGesture);
-
-  // The caption owns the right button — it drives the A-B loop, set/extended via the
-  // mouse handlers above (right-click a word, or right-press-and-drag a phrase).
-  // Suppress the browser context menu across the whole caption so a right-click or
-  // right-drag never pops the native menu. The loop itself is set/cleared on
-  // mousedown → mousemove → mouseup, since the right button doesn't drag-select text.
-  nowWindow.addEventListener("contextmenu", (e) => { e.preventDefault(); });
-
-  // Restore the original reflex: ANY press other than the right button (which sets or
-  // extends the loop) clears it — click anywhere to stop looping, exactly as an outside
-  // click used to clear the old checkpoint. Document-level, so a click anywhere on the
-  // page counts, not just on the caption.
-  document.addEventListener("mousedown", (e) => {
-    if (e.button === 2) return;        // the right button drives the loop itself
-    if (mouseSuppressed()) return;     // ignore the synthetic click trailing a touch gesture
-    clearLoop();                       // no-ops when nothing is looping
-  });
-
-  // Touch: hold a caption word, then drag across the line to select a phrase.
-  enableTouchWordSelect(nowWindow, ".word",
-    (span) => {
-      frozen = true;
-      const i = Number(span.dataset.i);
-      dragState = { startIdx: i, currentIdx: i, moved: false, snapshot: tokens.map((t) => !!t.marked) };
-      applyDragRange();
-    },
-    (span) => {
-      if (!dragState) return;
-      const i = Number(span.dataset.i);
-      if (i === dragState.currentIdx) return;
-      dragState.currentIdx = i;
-      if (i !== dragState.startIdx) dragState.moved = true;
-      applyDragRange();
-    },
-    finishCaptionGesture,
-    // Freeze the caption the instant a finger lands so the ticker can't rebuild
-    // the line during the hold; unfreeze if the gesture is abandoned (a scroll or
-    // a plain tap) — a committed selection unfreezes in finishCaptionGesture.
-    { onPress: () => { frozen = true; }, onRelease: () => { frozen = false; } });
-  function applyDragRange(ds = dragState) {
-    if (!ds) return;
-    for (let i = 0; i < tokens.length; i++) tokens[i].marked = ds.snapshot[i];
-    const a = Math.min(ds.startIdx, ds.currentIdx);
-    const b = Math.max(ds.startIdx, ds.currentIdx);
-    for (let i = a; i <= b; i++) {
-      const t = tokens[i];
-      if (t && t.type === "word") t.marked = !ds.snapshot[i];
-    }
-    // Repaint marks IN PLACE — never rebuild the caption mid-gesture. A full
-    // paintWindow() (nowWindow.innerHTML = …) destroys and recreates the very
-    // span the finger is holding, i.e. the touchstart target. On touch, once that
-    // target is detached from the document the browser keeps dispatching
-    // touchmove/touchend to the orphaned node — they no longer bubble to the
-    // delegated listener on nowWindow, so extend() stops firing and a drag froze
-    // at one word on mobile. (The text + explanation panels never hit this: they
-    // toggle .marked on stable spans.) The gesture runs frozen, so the spans and
-    // their data-i ↔ tokens mapping are stable; only the .marked class changes.
-    repaintMarks();
-  }
-
-  // Toggle .marked on the live caption spans to match `tokens`, without rebuilding
-  // the DOM — so the touchstart target survives a drag (see applyDragRange).
-  function repaintMarks() {
-    for (const sp of nowWindow.querySelectorAll(".word")) {
-      const t = tokens[Number(sp.dataset.i)];
-      if (t) sp.classList.toggle("marked", !!t.marked);
-    }
-  }
-
-  // Group consecutive marked words into items from the caption's token array.
-  function collectMarkedItems(tk = tokens) {
-    const items = [];
-    let i = 0;
-    while (i < tk.length) {
-      const t = tk[i];
-      if (t.type === "word" && t.marked) {
-        const words = [t.value];
-        let j = i + 1;
-        while (j < tk.length - 1) {
-          const sep = tk[j], next = tk[j + 1];
-          if (sep.type === "sep" && /^\s+$/.test(sep.value) && next.type === "word" && next.marked) {
-            words.push(next.value); j += 2;
-          } else break;
-        }
-        items.push({ phrase: words.join(" "), words });
-        i = j;
-      } else i++;
-    }
-    return dedupeItems(items);
-  }
 
   /* ---------- panels: create / allocate / reset ---------- */
 
@@ -983,21 +506,6 @@
     keepScrollInside(panel.contentEl);
   }
 
-  // A fresh caption selection: route it to the next panel slot, anchor its
-  // context window, and kick off the explanation.
-  function startNewExplain(items) {
-    const panel = nextPanelForSelection();
-    panel.threadText = visibleChunkText();
-    triggerExplain(panel, items);
-  }
-
-  function visibleChunkText() {
-    // The model's context window: the previous line, the current line, and the
-    // next one (P1, current, N1). The previous line is the one shown and markable
-    // in the caption; the next line is sent for context but not displayed.
-    return [chunks[chunkIndex - 1], chunks[chunkIndex], chunks[chunkIndex + 1]]
-      .filter(Boolean).map((c) => c.text).join(" ");
-  }
 
   /* ---------- explanation flow ---------- */
 
@@ -1465,353 +973,15 @@
 
   /* ---------- reset helpers ---------- */
 
-  function resetTranscriptState() {
-    chunks = []; chunkIndex = 0; tokens = []; windowLayout = []; frozen = false;
-    wordReveal = false;
-    loopStart = null; loopEnd = null;   // drop any A-B loop from the previous clip
-  }
   function resetThread() {
     // Tear down every panel and reset the round-robin counter — a new episode
     // starts with a clean, empty band.
     teardownAllPanels();
   }
 
-  /* ---------- transcript ---------- */
 
-  // Transcripts are computed once, server-side, at import time (the backend
-  // talks to the self-hosted Parakeet STT service via comart) — this just
-  // polls GET /api/library/:id/transcript until it's ready and feeds the
-  // resulting {lines, words} into the same chunk-building/reveal path as before.
-  const TX_POLL_MS = 5000;
-  const TX_POLL_MAX = 10;   // ~50s of live polling before giving up
 
-  async function loadTranscript(entry, signal) {
-    const token = ++transcriptToken;
-    if (entry.transcriptStatus === "none") return;   // no transcript for this entry; playback still works
-    for (let attempt = 0; ; attempt++) {
-      if (token !== transcriptToken) return;
-      let res;
-      try {
-        res = await fetch(`${apiBase()}/api/library/${encodeURIComponent(entry.id)}/transcript`, { signal });
-      } catch {
-        return;
-      }
-      if (token !== transcriptToken) return;
-      if (res.status === 202) {
-        if (attempt === 0) showWindowStatus("Transcript is being prepared…", "loading");
-        if (attempt >= TX_POLL_MAX) { showWindowStatus("Transcript isn't ready yet — check back later.", "error"); return; }
-        await new Promise((r) => setTimeout(r, TX_POLL_MS));
-        continue;
-      }
-      if (!res.ok) { showWindowStatus("Couldn't load the transcript.", "error"); return; }
-      let data;
-      try { data = await res.json(); } catch { return; }
-      if (!data || !data.lines || !data.lines.length) { showWindowStatus("No speech could be transcribed from this file.", "error"); return; }
-      const words = Array.isArray(data.words) ? data.words : [];
-      wordReveal = words.length > 0;
-      // With word timings, build chunks straight from the words so each carries
-      // its own timing; otherwise fall back to the segment-line grouping.
-      chunks = wordReveal ? buildChunksFromWords(words) : buildChunks(data.lines);
-      synced = chunks.some((c) => c.start > 0);
-      chunkIndex = 0;
-      setListen("active");
-      buildWindow();
-      return;
-    }
-  }
 
-  /* ---------- time formatting ---------- */
-
-  // Playback-time format (h:mm:ss / m:ss) for the audio bar and library rows.
-  function fmt(s) {
-    s = Math.max(0, Math.floor(s || 0));
-    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
-    const pad = (n) => String(n).padStart(2, "0");
-    return h > 0 ? `${h}:${pad(m)}:${pad(ss)}` : `${m}:${pad(ss)}`;
-  }
-
-  /* ---------- library ---------- */
-
-  let srcAbort = null, srcToken = 0;
-
-  let libraryEntries = [];
-  // Stack of {entry, children} frames for nested collections (e.g. a show
-  // entry containing day entries, each containing segment entries) — the
-  // last frame is the list currently shown. Empty means the top grid.
-  let collectionStack = [];
-
-  const MOVIE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="4"/><path d="M10 9.2l5 2.8-5 2.8z" fill="currentColor" stroke="none"/></svg>';
-  const AUDIO_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>';
-  // A "collection" entry (e.g. a news episode grouping several individually-
-  // imported segments) has no media of its own to hint at with MOVIE/AUDIO_ICON.
-  const COLLECTION_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="4" rx="1"/><rect x="3" y="10" width="18" height="4" rx="1"/><rect x="3" y="16" width="18" height="4" rx="1"/></svg>';
-
-  async function loadLibrary() {
-    try {
-      const res = await fetch(`${apiBase()}/api/library`);
-      libraryEntries = await res.json();
-    } catch {
-      libraryEntries = [];
-    }
-    return libraryEntries;
-  }
-
-  // A stable, arbitrary hue per entry (from its id) so fallback cards — shown
-  // when an entry has no cover art, e.g. a personal recording — read as a
-  // deliberate set of colors rather than looking broken.
-  function hueFor(id) {
-    let h = 0;
-    for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 360;
-    return h;
-  }
-
-  function iconFor(entry) {
-    return entry.type === "collection" ? COLLECTION_ICON : entry.hasVideo ? MOVIE_ICON : AUDIO_ICON;
-  }
-
-  // Cover art for a grid card. The <img> sits over a gradient+icon fallback
-  // that's just always there — no probing needed, a poster.jpg 404 (most
-  // entries won't have one; see backend/poster.js) simply hides the <img>
-  // and the fallback shows through.
-  function libraryThumbHtml(entry) {
-    const icon = iconFor(entry);
-    return `<span class="lib-thumb" style="--hue:${hueFor(entry.id)}">` +
-      `<img src="${apiBase()}/api/library/${encodeURIComponent(entry.id)}/poster" alt="" loading="lazy" onerror="this.style.display='none'">` +
-      `<span class="lib-thumb-fallback">${icon}</span></span>`;
-  }
-
-  // Grid card for the idle-state home view — cover, title, kind, and a
-  // continue-watching line (mirrors comart's own book-library cards: title /
-  // author / "Chapter 8 · 71%"). A "collection" entry (e.g. a news episode
-  // grouping several segments) has no playback progress of its own, so its
-  // line just says how it opens.
-  function libraryCardHtml(entry) {
-    const kind = entry.type === "collection" ? "Collection"
-      : entry.type === "podcast" ? "Podcast" : entry.type === "movie" ? "Movie" : "Audio";
-    const pct = entry.durationSec > 0 ? Math.round((entry.progressSec / entry.durationSec) * 100) : 0;
-    const progressLine = entry.type === "collection" ? "View segments"
-      : entry.transcriptStatus === "processing" || entry.transcriptStatus === "pending"
-      ? "Transcribing…"
-      : entry.transcriptStatus === "error" ? "Transcript failed"
-      : pct > 0 ? `${fmt(entry.progressSec)} · ${pct}%` : fmt(entry.durationSec);
-    return `<button class="lib-card lib-item" type="button" data-id="${escapeHtml(entry.id)}">` +
-      libraryThumbHtml(entry) +
-      `<span class="lib-card-title">${escapeHtml(entry.title || "Untitled")}</span>` +
-      `<span class="lib-card-kind">${kind}</span>` +
-      `<span class="lib-card-progress">${progressLine}</span></button>`;
-  }
-
-  // Shared by every clickable entry — grid cards and list rows alike. A
-  // collection (whatever level it's nested at — a show, a day within it,
-  // etc.) opens its children; anything else plays.
-  function onEntryActivate(entry) {
-    if (!entry) return;
-    if (entry.type === "collection") openCollection(entry);
-    else setSource(entry);
-  }
-
-  const EMPTY_LIBRARY_HTML = '<div class="window-status"><p>Nothing in the library yet.</p></div>';
-
-  function wireEntryClicks(container, entries) {
-    container.querySelectorAll(".lib-item").forEach((btn) => {
-      btn.addEventListener("click", () => onEntryActivate(entries.find((e) => e.id === btn.dataset.id)));
-    });
-  }
-
-  // Every level — the root library, or (with backLabel) a collection's
-  // children one level down — renders as the exact same card grid, cards
-  // starting at the exact same position either way. The back button is
-  // absolutely positioned (see .lib-list-back in app.html), not a grid row
-  // of its own, specifically so its presence never shifts the cards.
-  function renderGrid(container, entries, backLabel) {
-    const back = backLabel ? `<button class="lib-list-back" type="button">← ${escapeHtml(backLabel)}</button>` : "";
-    container.innerHTML = back + (entries.length ? entries.map(libraryCardHtml).join("") : EMPTY_LIBRARY_HTML);
-    if (backLabel) container.querySelector(".lib-list-back").addEventListener("click", backOneLevel);
-    wireEntryClicks(container, entries);
-  }
-
-  // The home view: a poster grid.
-  function renderLibraryGrid(container, entries) {
-    collectionStack = [];
-    renderGrid(container, entries, null);
-  }
-
-  // The current collection frame's children, with a back button labeled for
-  // wherever "back" goes: the parent collection one level up, or "Library"
-  // at the top of the stack.
-  function renderCollectionView() {
-    const depth = collectionStack.length;
-    const frame = collectionStack[depth - 1];
-    const backLabel = depth > 1 ? collectionStack[depth - 2].entry.title : "Library";
-    renderGrid(libraryViewEl, frame.children, backLabel);
-  }
-
-  async function openCollection(entry) {
-    let children = [];
-    try {
-      const res = await fetch(`${apiBase()}/api/library/${encodeURIComponent(entry.id)}/children`);
-      children = await res.json();
-    } catch {
-      children = [];
-    }
-    collectionStack.push({ entry, children });
-    renderCollectionView();
-  }
-
-  function backOneLevel() {
-    collectionStack.pop();
-    if (collectionStack.length) renderCollectionView();
-    else renderLibraryGrid(libraryViewEl, libraryEntries);
-  }
-
-  // The library button always returns to the home view — stop wherever we
-  // are and show the grid, exactly like a fresh launch (BASE_TITLE, disabled
-  // transport, no video). Re-picking the same entry resumes from its saved
-  // position (restoreProgress in setSource), so nothing is lost by leaving.
-  function goHome() {
-    if (currentEntry) flushProgress();
-    currentEntry = null;
-    srcToken++;
-    transcriptToken++;
-    if (srcAbort) { try { srcAbort.abort(); } catch {} }
-    audioEl.pause();
-    audioEl.removeAttribute("src");
-    try { audioEl.load(); } catch {}
-    // audioEl's own 'pause' event is async and can be dropped by the
-    // load() right above (which resets the element's state machine) before
-    // it dispatches — paint the stopped state directly rather than hope it
-    // survives.
-    paintPlay();
-    setVideoCapability(null);
-    playBtn.disabled = true;
-    backBtn.disabled = true;
-    fwdBtn.disabled = true;
-    document.title = BASE_TITLE;
-    setListen("idle");
-    loadLibrary().then(() => { if (!currentEntry) renderLibraryGrid(libraryViewEl, libraryEntries); });
-  }
-  openBtn.addEventListener("click", () => goHome());
-
-  /* --- playback progress, saved server-side per entry --- */
-
-  const PROGRESS_SAVE_MS = 5000;
-  let lastProgressSave = 0;
-
-  function progressURL(entry) {
-    return `${apiBase()}/api/library/${encodeURIComponent(entry.id)}/progress`;
-  }
-  async function restoreProgress(entry, signal) {
-    let data;
-    try {
-      const r = await fetch(progressURL(entry), { signal });
-      if (!r.ok) return;
-      data = await r.json();
-    } catch {
-      return;
-    }
-    if (currentEntry !== entry) return;   // superseded mid-fetch
-    const pos = Number(data && data.positionSec) || 0;
-    if (pos <= 0) return;
-    // Adaptation (not comart's): stamp the pending seek with the stream it is for.
-    // A 'loadedmetadata' listener is bound to the ELEMENT, and #ln-audio is shared
-    // with Daily Dictation — so switching tabs inside this fetch window would fire
-    // this against the DICTATION clip and drag it to a Watch timestamp. The
-    // currentEntry test above cannot catch that: dictation leaves currentEntry
-    // alone by design. (Same hazard app-dictation.js guards in seekToLoop/seekBack.)
-    const forSrc = audioEl.getAttribute("src");
-    const doSeek = () => {
-      audioEl.removeEventListener("loadedmetadata", doSeek);
-      if (audioEl.getAttribute("src") !== forSrc) return;
-      if (window.__dictationOwnsAudio && window.__dictationOwnsAudio()) return;
-      seekTo(pos);
-    };
-    if (audioEl.readyState >= 1) doSeek(); else audioEl.addEventListener("loadedmetadata", doSeek);
-  }
-  function flushProgress() {
-    if (!currentEntry || !audioEl.src) return;
-    // Adaptation (not comart's): #ln-audio is shared with Daily Dictation, which
-    // swaps in its own clip and deliberately leaves currentEntry alone. Both
-    // guards above stay true across that switch while naming DIFFERENT media, so
-    // this used to POST the dictation playhead to the Watch entry's progress
-    // record. Three conditions have to hold before a write is trustworthy:
-    //
-    //  1. Dictation is not driving the transport. The src test below is NOT
-    //     enough on its own: a dictation session drawn from the very entry Watch
-    //     has open passes it, and then the segment's offset would be saved as
-    //     the entry's resume point. Ownership, not identity, settles that one.
-    //     Ask dictation whether it actually took the element rather than testing
-    //     body.dictation-on — with no session loaded (backend down, or all
-    //     sessions done) the Dictation TAB is open while the element still holds
-    //     Watch's clip, and that playback deserves to be saved like any other.
-    if (window.__dictationOwnsAudio && window.__dictationOwnsAudio()) return;
-    //  2. The loaded stream really is this entry's — same test dictation uses for
-    //     `sameEntry`. Covers the window after a switch back, where the class is
-    //     already gone but the dictation clip has not been handed back yet.
-    if (!audioEl.src.includes(`/api/library/${encodeURIComponent(currentEntry.id)}/`)) return;
-    //  3. The element has actually loaded that stream. Between `src = …; load()`
-    //     and 'loadedmetadata' both tests above pass while currentTime is a
-    //     spec-mandated 0 — so a flush landing in that window (the Library button
-    //     right after returning from dictation) would silently reset the entry to
-    //     0:00. At HAVE_NOTHING there is no real playhead to save, ever.
-    if (audioEl.readyState < 1) return;
-    const body = JSON.stringify({ positionSec: effPos() });
-    const url = progressURL(currentEntry);
-    if (navigator.sendBeacon) {
-      try { navigator.sendBeacon(url, new Blob([body], { type: "application/json" })); return; } catch {}
-    }
-    try { fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body, keepalive: true }); } catch {}
-  }
-  audioEl.addEventListener("pause", flushProgress);
-  window.addEventListener("pagehide", flushProgress);
-  window.addEventListener("beforeunload", flushProgress);
-
-  /* --- load a library entry --- */
-
-  // Point the player at a library entry, streamed straight from the backend —
-  // no blob, no object URL, the same URL the video element uses when the entry
-  // has a picture (see setVideoCapability). Restores saved progress before
-  // playing, so there's no audible jump.
-  async function setSource(entry) {
-    if (!entry) return;
-    const token = ++srcToken;
-    if (srcAbort) { try { srcAbort.abort(); } catch {} }
-    const ctl = (srcAbort = new AbortController());
-
-    flushProgress();   // persist the outgoing entry's position first
-    transcriptToken++;
-    setVideoCapability(null);   // withdraw the toggle until confirmed
-
-    currentEntry = entry;
-    document.title = `${entry.title || "audio"} · ${BASE_TITLE}`;
-    resetTranscriptState();
-    resetThread();
-    playBtn.disabled = true;
-    backBtn.disabled = true;
-    fwdBtn.disabled = true;
-    setListen("loading");
-
-    audioEl.src = `${apiBase()}/api/library/${encodeURIComponent(entry.id)}/stream`;
-    try { audioEl.load(); } catch {}
-    playBtn.disabled = false;
-    backBtn.disabled = false;
-    fwdBtn.disabled = false;
-    // Opening an entry is always a deliberate user action, so move focus onto
-    // play (it never draws a focus ring — see the .ab-play CSS comment).
-    try { playBtn.focus({ preventScroll: true }); } catch {}
-
-    // Movies show video, audio/podcasts don't — automatic, per entry (see
-    // applyVideoMode: no manual toggle, video mode just tracks hasVideo).
-    setVideoCapability(entry.hasVideo ? entry.id : null);
-    await restoreProgress(entry, ctl.signal);
-    if (token !== srcToken) return;
-    loadTranscript(entry, ctl.signal);
-
-    const p = audioEl.play();
-    if (p && p.catch) p.catch((e) => {
-      paintPlay();   // never leave the bar showing "playing" when it isn't
-      if (e && e.name === "NotSupportedError") showWindowStatus("This audio can't be played in your browser.", "error");
-    });
-  }
 
   /* ---------- audio bar wiring ---------- */
 
@@ -1836,8 +1006,6 @@
     // Failsafe: if 'seeked' never fires, don't strand the caption on the target.
     setTimeout(() => { if (seekTarget === t) seekTarget = null; }, 1000);
     paintTime();
-    syncWindow();   // refresh the caption to the new position immediately
-    updateReveal(); // and re-evaluate which words are now "spoken"
   }
   function seekBy(delta) {
     if (!audioEl.src) return;
@@ -1856,23 +1024,12 @@
   // accumulated position on pause.
   audioEl.addEventListener("play", paintPlay);
   audioEl.addEventListener("pause", paintPlay);
-  // The loop watcher stops itself while paused; restart it on resume.
-  audioEl.addEventListener("play", () => { if (loopStart != null) startLoopWatch(); });
   // Safari can fire a spurious 'ended' when currentTime is set during a seek;
   // only repaint for a real end-of-track.
   audioEl.addEventListener("ended", () => {
     const d = audioEl.duration;
     if (isFinite(d) && d > 0 && audioEl.currentTime < d - 0.5) return;
-    // A loop whose end sits at the very end of the clip would hit 'ended' before the
-    // rAF watcher could seek back — restart it here instead of stopping.
-    if (loopStart != null) {
-      seekTo(Math.max(0, loopStart - LOOP_LEAD_IN));
-      const p = audioEl.play(); if (p && p.catch) p.catch(() => {});
-      startLoopWatch();
-      return;
-    }
     // Auto-replay: restart the whole track from the top instead of stopping.
-    // The muted <video> picture follows along on its own next sync tick.
     seekTo(0);
     const p = audioEl.play(); if (p && p.catch) p.catch(() => { paintPlay(); });
   });
@@ -1887,8 +1044,6 @@
     // inaccuracy, and the 1s failsafe covers a keyframe-snapped landing.
     if (seekTarget != null && Math.abs((audioEl.currentTime || 0) - seekTarget) < 0.15) {
       seekTarget = null;
-      if (!frozen) syncWindow();   // re-anchor the caption to the real position at once
-      updateReveal();
     }
   });
   // If the file can't be decoded/played (unsupported codec, corrupt bytes, a
@@ -1901,12 +1056,8 @@
     if (code === 1) return;                            // MEDIA_ERR_ABORTED — benign (load replaced)
     seekTarget = null;
     paintPlay();
-    showWindowStatus(
-      code === 4 ? "This audio can't be played in your browser (unsupported format)."
-      : code === 3 ? "Playback failed while decoding this file."
-      : code === 2 ? "A network error interrupted playback."
-      : "This file couldn't be played.",
-      "error");
+    warnEl.textContent = "This audio can't be played in your browser.";
+    warnEl.hidden = false;
   });
   // Some containers (WebM/Ogg, especially MediaRecorder output) report duration
   // as Infinity/NaN until the element has seen the end of the stream — which
@@ -1987,8 +1138,6 @@
     try { audioEl.currentTime = t; } catch {}
     setTimeout(() => { if (seekTarget === t) seekTarget = null; }, 1000);
     paintTime();
-    syncWindow();   // sync the caption to the clicked point even while frozen
-    updateReveal();
   });
   function paintPlay() {
     const on = !audioEl.paused && !audioEl.ended;
@@ -1996,49 +1145,30 @@
     playBtn.setAttribute("aria-label", on ? "Pause" : "Play");
   }
   function paintTime() {
+    const fmtClock = (s) => {
+      s = Math.max(0, Math.floor(s || 0));
+      const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+      const pad = (n) => String(n).padStart(2, "0");
+      return h > 0 ? `${h}:${pad(m)}:${pad(ss)}` : `${m}:${pad(ss)}`;
+    };
     const d = isFinite(audioEl.duration) ? audioEl.duration : 0;
     const p = effPos();
     fillEl.style.width = (d ? (p / d) * 100 : 0) + "%";
-    timeEl.textContent = fmt(p) + " / " + fmt(d);
+    timeEl.textContent = fmtClock(p) + " / " + fmtClock(d);
   }
 
   function startTicker() {
     if (ticker) return;
     ticker = setInterval(() => {
-      // Loop boundary is checked FIRST, even in a hidden tab: requestAnimationFrame
-      // (the primary, ~16ms loop watcher) is paused while the tab is backgrounded, but
-      // the audio keeps playing — so without this a backgrounded loop would run straight
-      // past its end. setInterval is only throttled (~1/s) in the background, not paused,
-      // so it keeps the loop repeating (coarsely) until the tab is focused again. When
-      // focused, rAF fires first and this is a no-op (the seekTarget guard blocks a double seek).
-      if (loopStart != null && !audioEl.paused && !audioEl.error && seekTarget == null &&
-          effPos() >= loopEnd) {
-        seekTo(Math.max(0, loopStart - LOOP_LEAD_IN));
-      }
-      // Persist playback progress every few seconds, independent of tab visibility —
-      // a backgrounded tab still plays audio and should still checkpoint it.
-      if (!audioEl.paused && !audioEl.error && performance.now() - lastProgressSave >= PROGRESS_SAVE_MS) {
-        lastProgressSave = performance.now();
-        flushProgress();
-      }
-      // Skip the caption sync when there's nothing to sync, the clip errored, or the tab
-      // is hidden (background tabs throttle setInterval, so this would just churn).
+      // Dictation owns the <audio> element outright now: just keep the bar's
+      // time fresh on the 150ms tick (timeupdate already drives it while playing).
       if (document.hidden || !audioEl.src || audioEl.error) return;
-      if (!frozen) syncWindow();
-      updateReveal();
-      // Video mode rides this tick rather than owning a timer: keep the muted
-      // picture on the audio's clock. A no-op (one property read) when off.
-      syncVideoClock(false);
+      paintTime();
     }, 150);
   }
-  // A backgrounded tab throttles the ticker, so the caption can fall behind the
-  // audio; snap it back the moment the tab is shown again.
   document.addEventListener("visibilitychange", () => {
     if (document.hidden || !audioEl.src) return;
-    if (!frozen) syncWindow();
-    updateReveal();
     paintTime();
-    syncVideoClock(true);   // the picture drifts in a background tab too — snap it back
   });
 
   /* ---------- playback keyboard shortcuts ----------
@@ -2051,56 +1181,19 @@
     return tag === "TEXTAREA" || tag === "INPUT" || tag === "SELECT" ||
            el.isContentEditable || el.getAttribute("role") === "separator";
   }
-  /* ---------- reader timing controls ([ ] nudge · \ reset) ----------
-     A brief hint shown in the warn slot above the bar; auto-clears. */
-  let hintTimer = null;
-  function flashHint(msg) {
-    warnEl.textContent = msg;
-    warnEl.hidden = false;
-    if (hintTimer) clearTimeout(hintTimer);
-    hintTimer = setTimeout(() => { warnEl.hidden = true; warnEl.textContent = ""; }, 1800);
-  }
-  function refreshTiming() {
-    if (!chunks.length) return;
-    syncWindow();    // may switch the current line
-    updateReveal();  // re-light the words at the nudged time
-  }
-  function nudgeOffset(delta) {
-    syncOffset = Math.round((syncOffset + delta) * 100) / 100;
-    try { localStorage.setItem("zx-offset", String(syncOffset)); } catch {}
-    refreshTiming();
-    const s = (syncOffset >= 0 ? "+" : "") + syncOffset.toFixed(2) + "s";
-    flashHint("Timing " + s + (syncOffset > 0 ? " (earlier)" : syncOffset < 0 ? " (later)" : ""));
-  }
-  function resetOffset() {
-    syncOffset = 0;
-    try { localStorage.setItem("zx-offset", "0"); } catch {}
-    refreshTiming();
-    flashHint("Timing reset (0.00s)");
-  }
 
   document.addEventListener("keydown", (e) => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (isEditableTarget(document.activeElement)) return;
     if (!audioEl.src) return;
-    if (e.key === "Escape") {
-      if (loopStart != null) { e.preventDefault(); clearLoop(); }
-      return;   // otherwise leave Escape for whatever else handles it
-    }
     if (e.key === "ArrowLeft") {
       e.preventDefault();
-      // With a loop set, ← restarts it from the top (a manual replay on demand);
-      // otherwise the usual -5s jump.
-      if (loopStart != null) seekTo(Math.max(0, loopStart - LOOP_LEAD_IN)); else seekBy(-5);
+      seekBy(-5);
     }
     else if (e.key === "ArrowRight") {
       e.preventDefault();
-      clearLoop();     // → means "move on": drop any loop, then jump ahead
       seekBy(5);
     }
-    else if (e.key === "]") { e.preventDefault(); nudgeOffset(0.1); }
-    else if (e.key === "[") { e.preventDefault(); nudgeOffset(-0.1); }
-    else if (e.key === "\\") { e.preventDefault(); resetOffset(); }
     else if (e.key === " " || e.key === "Spacebar") {
       // Space belongs to the player, full stop. A button keeps focus after being
       // clicked, so the browser's native "Space activates the focused button"
@@ -2123,10 +1216,10 @@
   const isDesktopBand = () => window.matchMedia("(min-width: 761px)").matches;
   // Desktop and mobile each remember their own panel height — a height that feels
   // right on a wide screen would swamp a phone, and vice-versa.
-  // …and, on the same principle, a separate one for dictation: there the panel is
+  // …and a separate one for the squeezed panel: there the panel is
   // allowed to shrink below --panel-h so the notepad keeps its floor, so a drag
-  // made in dictation starts from a squeezed box and would otherwise write that
-  // squeezed height into the height Watch reads back.
+  // made while squeezed starts from a squeezed box and would otherwise persist
+  // that squeezed height as the normal one.
   const panelHKey = () => {
     const base = isDesktopBand() ? "zx-panel-h" : "zx-panel-h-mobile";
     return document.body.classList.contains("dictation-on") ? base + "-dictation" : base;
@@ -2251,220 +1344,17 @@
       // initPanelH) rather than the live value, so a never-dragged panel can't
       // ratchet on a tiny viewport either.
       applyPanelH(stored > 0 ? stored : Math.round(window.innerHeight * 0.6));
-      // Video mode is desktop-only: crossing the 761px breakpoint hides the toggle
-      // and releases the picture (idempotent, so the other resize frames are free).
-      applyVideoMode();
     });
   });
 
-  /* ---------- video mode (any hasVideo library entry · desktop only) ----------
-
-     A movie entry streams the SAME file to both elements: the <audio> element is
-     always the clock the transcript's word timings are aligned to, and — when the
-     entry has a picture — a MUTED <video> plays the identical /stream URL slaved
-     to it. The audio element stays the single clock, so no amount of picture
-     buffering, stalling or keyframe-snapping can drag the caption out of sync —
-     the worst a bad video stream can do is look choppy.
-
-     Nothing here is allowed to accumulate over a session — the whole point of
-     keeping the video tab-local:
-       · no blob, no object URL: the element streams a plain src URL (range-
-         requested), so the BROWSER owns the buffer and fetches only what's
-         actually watched.
-       · ONE <video> element, in the markup, reused forever, with its listeners
-         attached exactly once here — so toggling a hundred times adds none.
-       · turning video mode off (or loading any other source, or crossing to a
-         phone-width viewport, or leaving the page) runs releaseVideo(): pause,
-         drop the src ATTRIBUTE, load() — the spec's recipe for making the element
-         let go of the decoder, the network stream and every buffered range.
-       · drift correction rides the caption's existing 150 ms ticker, so the
-         feature owns no timer of its own.
-
-     Desktop only: the band is a fixed-height flex column there, and a phone has no
-     room for a picture above the panel and the player. The toggle is CSS-hidden
-     below 761px and crossing that breakpoint releases the video. */
-
-  const videoWrap = document.getElementById("ln-video");
-  const videoEl = document.getElementById("ln-video-el");
-  const videoStatusEl = document.getElementById("ln-video-status");
-
-  // Drift bands against the audio clock, in seconds. Below RATE the picture is
-  // left alone; between RATE and SEEK we trim playbackRate and let it coast back
-  // into line; above SEEK — an arrow-key jump, a track click, an A-B loop
-  // wrapping — only a seek can land it.
-  const VIDEO_DRIFT_RATE = 0.12;
-  const VIDEO_DRIFT_SEEK = 0.5;
-  const VIDEO_RATE_TRIM = 0.06;   // ±6% on a MUTED picture is invisible; a seek stutters
-  const VIDEO_SEEK_EPS = 0.08;    // even a forced resync skips a jump smaller than this
-
-  let videoSourceId = null; // id of the loaded entry, when it has a picture (null = audio-only)
-  let videoState = "idle";  // idle | loading | ready | error
-  let videoToken = 0;       // bumped by every attach/release; a stale callback bails
-
-  const videoCapable = () => isDesktopBand();
-  const videoShown = () => !videoWrap.hidden;
-
-  // The overlay: spinner while preparing, a sentence on failure, nothing once the
-  // first frame is on screen. Idempotent, so the reconcilers can call it freely.
-  function videoStatus(message, kind) {
-    if (!message && kind !== "loading") {
-      if (!videoStatusEl.hidden) { videoStatusEl.hidden = true; videoStatusEl.innerHTML = ""; }
-      return;
-    }
-    let html = '<div class="window-status' + (kind === "error" ? " error" : "") + '">';
-    if (kind === "loading") html += '<div class="spinner"></div>';
-    if (message) html += "<p>" + escapeHtml(message) + "</p>";
-    html += "</div>";
-    videoStatusEl.innerHTML = html;
-    videoStatusEl.hidden = false;
-  }
-
-  // Let go of everything the stage holds. Safe to call at any time, any number of
-  // times — the reconcilers below lean on that.
-  function releaseVideo() {
-    const hadSrc = videoEl.hasAttribute("src");
-    videoState = "idle";
-    videoToken++;             // any callback still in flight is now stale
-    if (hadSrc) {
-      try { videoEl.pause(); } catch {}
-      try { videoEl.playbackRate = 1; } catch {}
-      // removeAttribute, NOT src = "": an empty src is a relative URL that
-      // resolves to the page itself, which the element would try to load and then
-      // report as an unsupported source. The load() after it is what actually
-      // frees the decoder and the buffered ranges.
-      videoEl.removeAttribute("src");
-      try { videoEl.load(); } catch {}
-    }
-    videoStatus("", null);
-  }
-
-  // Reconcile the stage with (source, viewport). No manual toggle — video mode
-  // just tracks whether the loaded entry has a picture. Idempotent, so it can
-  // be called freely from a resize or a source change.
-  function applyVideoMode() {
-    const on = !!videoSourceId && videoCapable();
-    // Video mode flag on <body> (see the body.video-on rules — the record button
-    // gets a drop-shadow so its glyph stays legible over the picture).
-    document.body.classList.toggle("video-on", on);
-    if (!on) {
-      releaseVideo();
-      videoWrap.hidden = true;
-      return;
-    }
-    videoWrap.hidden = false;
-    if (videoState === "idle") attachVideo();   // otherwise it's already loading/ready/failed
-  }
-
-  // Declare the loaded source's video capability: the entry id when it has a
-  // picture, null for an audio-only entry or a failed open. EVERY open path
-  // calls this, so the stage and the toggle can never outlive the source they
-  // belong to. The mode itself survives a switch between two video entries (the
-  // reader is still watching), and applyVideoMode then prepares the new one.
-  function setVideoCapability(id) {
-    videoSourceId = id || null;
-    releaseVideo();      // the previous picture's stream and decoder go now, not later
-    applyVideoMode();
-  }
-
-  // Attach the picture: the SAME /stream URL the audio element uses for this
-  // entry — muted, so the doubled range-read is silent. No probe needed (unlike
-  // a cold YouTube download, an imported file has no server-side prep step);
-  // failures surface through the element's own 'error' listener below.
-  function attachVideo() {
-    if (!videoSourceId) return;
-    videoToken++;
-    videoState = "loading";
-    videoStatus("", "loading");   // spinner only, until 'loadeddata' clears it
-    videoEl.src = `${apiBase()}/api/library/${encodeURIComponent(videoSourceId)}/stream`;
-    try { videoEl.load(); } catch {}
-  }
-
-  // Slave the muted picture to the audio clock. Called from the caption's 150 ms
-  // ticker, on play/pause/seek, and when the tab is shown again. force=true
-  // re-seeks regardless of the drift band (a fresh attach, a confirmed seek).
-  function syncVideoClock(force) {
-    if (!videoShown() || !videoEl.hasAttribute("src")) return;
-    const vd = videoEl.duration;
-    if (!isFinite(vd) || vd <= 0) return;   // metadata hasn't landed yet
-    // effPos(), not syncTime(): the picture follows the REAL audio position. The
-    // reader's [ ] nudge shifts only the caption's display clock.
-    const want = Math.min(effPos(), vd);
-    // A picture track shorter than the audio (a truncated download): park on the
-    // last frame instead of hammering seeks, and never play() at the end — Chrome
-    // treats play()-when-ended as "start over", which would loop the video.
-    const atEnd = want >= vd - 0.05;
-    const drift = (videoEl.currentTime || 0) - want;
-    const off = Math.abs(drift);
-    if (force ? off > VIDEO_SEEK_EPS : off > VIDEO_DRIFT_SEEK) {
-      try { videoEl.currentTime = want; } catch {}
-      if (videoEl.playbackRate !== 1) { try { videoEl.playbackRate = 1; } catch {} }
-    } else if (!atEnd && !audioEl.paused && off > VIDEO_DRIFT_RATE) {
-      // Coast back into line instead of seeking: behind → speed up, ahead → slow
-      // down. Converges in a second or two and is invisible without sound. Only
-      // while playing — a trimmed rate on a paused element just never converges.
-      const rate = drift > 0 ? 1 - VIDEO_RATE_TRIM : 1 + VIDEO_RATE_TRIM;
-      if (videoEl.playbackRate !== rate) { try { videoEl.playbackRate = rate; } catch {} }
-    } else if (videoEl.playbackRate !== 1) {
-      try { videoEl.playbackRate = 1; } catch {}
-    }
-    // Mirror the transport. The picture is muted, so autoplay policy never blocks
-    // this play() — but catch anyway, since a rejected promise is unhandled noise.
-    const shouldPlay = !audioEl.paused && !audioEl.ended && !audioEl.error && !atEnd;
-    if (shouldPlay) {
-      if (videoEl.paused) { const p = videoEl.play(); if (p && p.catch) p.catch(() => {}); }
-    } else if (!videoEl.paused) {
-      try { videoEl.pause(); } catch {}
-    }
-  }
-
-  // ---- element + transport wiring (attached ONCE, at load) ----
-  videoEl.addEventListener("loadedmetadata", () => { syncVideoClock(true); });
-  videoEl.addEventListener("loadeddata", () => {
-    if (!videoEl.hasAttribute("src")) return;
-    videoState = "ready";
-    videoStatus("", null);     // first frame decoded → reveal the picture
-    syncVideoClock(true);
-  });
-  videoEl.addEventListener("error", () => {
-    if (!videoEl.hasAttribute("src")) return;              // our own release, not a failure
-    if (videoEl.error && videoEl.error.code === 1) return; // MEDIA_ERR_ABORTED — benign
-    videoState = "error";
-    videoStatus("The video couldn't be played here.", "error");
-  });
-  // Click the picture to play/pause — the one gesture a video invites. (It drives
-  // the AUDIO element; the picture follows, like every other transport action.)
-  // preventDefault on mousedown stops the click from moving focus onto the video
-  // at all, so focus stays on the player's own controls where it belongs — and no
-  // later keypress can raise a focus ring around the picture. The click event
-  // still fires, and the document-level mousedown (which clears an A-B loop) is
-  // untouched: preventDefault doesn't stop propagation.
-  videoEl.addEventListener("mousedown", (e) => { e.preventDefault(); });
-  videoEl.addEventListener("click", () => { togglePlay(); });
-  audioEl.addEventListener("play", () => syncVideoClock(false));
-  audioEl.addEventListener("pause", () => syncVideoClock(false));
-  audioEl.addEventListener("seeked", () => syncVideoClock(true));
-  // Leaving the page: let go before the tab is frozen or discarded, so a
-  // back-forward-cached page never sits on a decoder and a live stream. Coming
-  // back from that cache, the stage is still up but empty (release left the state
-  // idle), so reconcile — which re-attaches if video mode was on.
-  window.addEventListener("pagehide", releaseVideo);
-  window.addEventListener("pageshow", () => { applyVideoMode(); });
 
   /* ---------- boot ---------- */
 
   playerEl.hidden = false;
+  document.title = "Daily Dictation";
   startTicker();
   checkCredits();
-  applyVideoMode();  // no source yet → stage down (one source of truth)
-  loadLibrary().then(() => { if (!currentEntry) renderLibraryGrid(libraryViewEl, libraryEntries); });
-  setListen("idle");   // show the library grid; the caption stays empty
 
-  // Exposed for dictation: checkpoint the open entry's position on demand.
-  // Dictation calls this immediately before it takes the shared <audio> over.
-  // It cannot rely on the 'pause' listener above to do it — pause() only QUEUES
-  // the media-element task, so that flush would land after dictation has already
-  // claimed ownership and be refused by guard 1.
-  window.__watchFlushProgress = flushProgress;
 
   // Exposed for dictation: trigger the same explanation panel from the
   // Reference line. `phrase` is the clicked word/phrase, `contextText`

@@ -3,12 +3,13 @@
 // embedded in this same app process on loopback, the same shape as comart's
 // original app-base.js used for its Go server: one DEFAULT_BASE, one function.
 //
-// This page has no server of its own, so every one of app-listen.js's
-// apiBase() call sites gets that prefixed on: the library endpoints
-// (/api/library/*) plus the three surviving explain-panel endpoints
-// (/api/explain, /api/pron, /api/credits). The renderer no longer talks to
-// comart directly for anything — transcription now happens once, server-side,
-// at import time, not per playback session.
+// This page has no server of its own, so every apiBase() call site gets that
+// prefixed on: the dictation endpoints (/api/dictation/*), the segment stream
+// (/api/library/:id/stream), the explanation/pronunciation/credit proxies
+// (/api/explain, /api/pron, /api/credits), and the mic transcription proxy
+// (/api/transcribe). The renderer no longer talks to comart directly for
+// anything — transcription now happens once, server-side, at import time,
+// not per playback session.
 //
 // localStorage is synchronous, so BASE resolves at call time with no async
 // race to guard against — still a function, not a captured constant, just for

@@ -1,20 +1,14 @@
 (() => {
   "use strict";
 
-  // Daily Dictation — isolated from app-listen.js (shares only the <audio>
-  // element and the bottom player bar). See backend/dictation.js for the
-  // session partition algorithm and the WER grading contract.
-
-  const LS_FEATURE = "av-feature";
-  const FEATURE_WATCH = "watch";
-  const FEATURE_DICTATION = "dictation";
+  // Daily Dictation — dictation sessions from PBS NewsHour (audio-only, 1-2
+  // sentences per session, looped), with a WER-based checker. See
+  // backend/dictation.js for the session partition algorithm and the grading
+  // contract. Drives the <audio> element and bottom player bar owned by
+  // app-player.js, and asks it for word/phrase explanations via
+  // window.__dictationExplain.
 
   // DOM — created in app.html
-  const tabsEl = document.getElementById("ln-tabs");
-  const tabWatch = document.getElementById("tab-watch");
-  const tabDict = document.getElementById("tab-dictation");
-  const libraryViewEl = document.getElementById("ln-library-view");
-  const videoWrap = document.getElementById("ln-video");
   const dictView = document.getElementById("dictation-view");
   const dictStatsEl = document.getElementById("dictation-stats");
   const dictRateWrap = document.getElementById("dictation-rate-wrap");
@@ -41,30 +35,13 @@
   const dictEmptyMsg = document.getElementById("dictation-empty-msg");
   const dictRetryBtn = document.getElementById("dictation-retry");
 
-  // Same <audio> the Watch feature drives — we loop a small window inside it.
+  // The <audio> element (owned by app-player.js) — dictation loops a small
+  // window inside it.
   const audioEl = document.getElementById("ln-audio");
   const playerEl = document.getElementById("ln-player");
   const playBtn = document.getElementById("ln-play");
 
-  let currentFeature = FEATURE_WATCH;
   let currentSession = null; // {sessionId, entryId, entryTitle, start, end, duration, wordCount, reference, words}
-
-  // What the shared <audio> held for Watch at the moment we took it over, so the
-  // element can be handed back intact. Without this, Watch keeps every scrap of
-  // its own state — transcript chunks, currentEntry, videoSourceId — while the
-  // element underneath plays a dictation clip, so its caption, seek bar, clock
-  // and muted video all describe a file it no longer owns. Watch's only
-  // src-restoring path is setSource(), which nothing but a library-card click
-  // reaches, so the switch back has to do it. null = Watch had nothing loaded.
-  let watchSrc = null, watchPos = 0, watchPlaying = false;
-
-  // Does dictation actually DRIVE the shared element right now? Not the same as
-  // "the Dictation tab is open": with no session loaded (backend unreachable, or
-  // every session done) the tab is up while the element still holds Watch's clip,
-  // and playback there is Watch's to save. app-listen.js's flushProgress asks this
-  // before persisting, so the answer has to mean ownership, not tab state.
-  let dictOwnsAudio = false;
-  window.__dictationOwnsAudio = () => dictOwnsAudio;
 
   // Monotonic stamp for the in-flight ensureDictationAudio load. A pending
   // 'loadedmetadata' seek is only valid for the load that armed it; pressing
@@ -82,13 +59,10 @@
   const D_LOOP_TAIL = 0.15;
 
   // An A-B LOOP over a phrase INSIDE the segment — right-click a reference word to
-  // loop that word, right-press-and-drag across words to loop the phrase. The same
-  // gesture, pads and toggle semantics as the Watch caption's loop (app-listen.js,
-  // "the caption owns the right button"), on the one word-level surface dictation
-  // has. It is deliberately a THIRD loop, distinct from both Watch's loopStart/
-  // loopEnd and the segment window above: Watch's outside-click handler nulls only
-  // its own, and the segment plays once and stops where this one repeats until
-  // cleared. Both null = no A-B loop, and the segment behaves exactly as before.
+  // loop that word, right-press-and-drag across words to loop the phrase. It is
+  // deliberately a SECOND loop, distinct from the segment window above: the
+  // segment plays once and stops where this one repeats until cleared. Both
+  // null = no A-B loop, and the segment behaves exactly as before.
   let abStart = null, abEnd = null;
   const AB_LEAD_IN = 0.03;   // start this far before the first word, so its onset isn't clipped
   const AB_TAIL = 0.12;      // …and this far past the last, so its final syllable finishes
@@ -130,9 +104,9 @@
 
   // Reference paragraph, rendered FROM the session's ASR word array so every span
   // carries its own data-start/data-end — that is what makes a right-click or
-  // right-drag loopable, exactly as the Watch caption's word spans are. The
-  // session's reference text is precisely these words joined by single spaces
-  // (backend/dictation.js partitionTranscript), so this reproduces it verbatim.
+  // right-drag loopable. The session's reference text is precisely these words
+  // joined by single spaces (backend/dictation.js partitionTranscript), so this
+  // reproduces it verbatim.
   function renderDictationReferenceFromWords(words) {
     let html = "";
     for (let i = 0; i < words.length; i++) {
@@ -169,176 +143,22 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Feature switch
+  // View init — dictation is the only feature, so there is no feature switch:
+  // the notepad is always shown and the player bar always visible.
   // ---------------------------------------------------------------------------
 
-  // Hand the shared <audio> back to Watch exactly as it was lent to us. Deliberately
-  // NOT done by clicking #ln-open: that runs Watch's goHome(), which would flush the
-  // DICTATION playhead onto the Watch entry, close the entry, refetch the library and
-  // dump the user on the grid — a permanent regression traded for a transient one.
-  function restoreWatchAudio() {
-    // If dictation never actually took the element — no session ever loaded — then
-    // what is in there is Watch's own clip, which the user may well have been
-    // listening to under this tab. Nothing to hand back, and seeking it to the
-    // snapshot would throw away wherever they had got to.
-    const owned = dictOwnsAudio;
-    dictOwnsAudio = false;
-    // Hand the element back at normal speed — a slowed dictation clip must not
-    // leave Watch playing everything at 0.75x.
-    try { audioEl.playbackRate = 1; } catch {}
-    if (!owned) { watchSrc = null; watchPos = 0; watchPlaying = false; return; }
-    try { audioEl.pause(); } catch {}
-    const nowSrc = audioEl.getAttribute("src") || "";
-    if (!watchSrc) {
-      // Watch was idle when we took over. Leave nothing of ours behind: an idle
-      // Watch tab with a live dictation clip in the transport is a lie.
-      if (nowSrc) {
-        audioEl.removeAttribute("src");
-        try { audioEl.load(); } catch {}
-      }
-      for (const id of ["ln-play", "ln-back", "ln-fwd"]) {
-        const b = document.getElementById(id);
-        if (b) b.disabled = true;
-      }
-      return;
-    }
-    if (nowSrc !== watchSrc) {
-      audioEl.src = watchSrc;
-      try { audioEl.load(); } catch {}
-    }
-    // Stamp the pending seek with the src it belongs to. A 'loadedmetadata'
-    // listener is bound to the ELEMENT, not to the load that armed it, so an
-    // unstamped one survives a failed load and then fires for whatever clip is
-    // loaded next — seeking a brand-new Watch entry to this clip's timestamp.
-    const pos = watchPos, resume = watchPlaying, forSrc = watchSrc;
-    const seekBack = () => {
-      audioEl.removeEventListener("loadedmetadata", seekBack);
-      if (currentFeature === FEATURE_DICTATION) return;   // bounced back into dictation
-      if (audioEl.getAttribute("src") !== forSrc) return; // a different clip loaded meanwhile
-      try { audioEl.currentTime = pos; } catch {}
-      if (resume) { const p = audioEl.play(); if (p && p.catch) p.catch(() => {}); }
-      // Only now is the hand-back complete, so only now is the snapshot spent.
-      watchSrc = null; watchPos = 0; watchPlaying = false;
-    };
-    if (audioEl.readyState >= 1) seekBack();
-    else audioEl.addEventListener("loadedmetadata", seekBack);
-  }
-
-  function setFeature(feat, { store = true } = {}) {
-    // Read the OUTGOING feature before overwriting it: the snapshot below must
-    // only fire on a real watch→dictation crossing. Re-pressing the Dictation
-    // tab while already in dictation would otherwise snapshot the dictation
-    // clip as if it were Watch's, and hand that back on the way out.
-    const prevFeature = currentFeature;
-    currentFeature = feat === FEATURE_DICTATION ? FEATURE_DICTATION : FEATURE_WATCH;
-    const isDict = currentFeature === FEATURE_DICTATION;
-    if (store) { try { localStorage.setItem(LS_FEATURE, currentFeature); } catch {} }
-
-    // Tabs
-    for (const btn of [tabWatch, tabDict]) {
-      const active = btn.dataset.feature === currentFeature;
-      btn.classList.toggle("active", active);
-      btn.setAttribute("aria-selected", String(active));
-    }
-    // Borrow the shared <audio>. Checkpoint Watch's outgoing position EXPLICITLY:
-    // pause() only queues the 'pause' task, so Watch's own listener would not run
-    // until after dictation has claimed the element, and flushProgress would then
-    // (rightly) refuse it. Calling the flusher directly is the only way that last
-    // write lands — and it must happen before dictOwnsAudio goes true.
-    if (isDict && prevFeature !== FEATURE_DICTATION) {
-      // …unless a hand-back is still in flight. Between `src = watchSrc; load()`
-      // and 'loadedmetadata' the clock reads 0, so re-snapshotting here would
-      // overwrite a real position with a zero — and Watch would come back at
-      // 0:00, then persist that as soon as it played. Keep the pending values.
-      const restorePending = !!watchSrc && audioEl.readyState < 1 &&
-                             audioEl.getAttribute("src") === watchSrc;
-      if (!restorePending) {
-        watchSrc = audioEl.getAttribute("src") || null;
-        watchPos = audioEl.currentTime || 0;
-        watchPlaying = !!watchSrc && !audioEl.paused;
-        if (watchSrc && window.__watchFlushProgress) {
-          try { window.__watchFlushProgress(); } catch {}
-        }
-      }
-      try { audioEl.pause(); } catch {}
-    }
-    document.body.classList.toggle("dictation-on", isDict);
-
-    // Main region ownership
-    dictView.hidden = !isDict;
-    if (isDict) {
-      // Hide Watch-owned surfaces while preserving the explanation panel
-      // (the panel stays across both features — see spec).
-      // Library/video visibility is additionally forced off via body.dictation-on.
-      // Make sure the player bar is visible in dictation too (audio-only).
-      if (playerEl) playerEl.hidden = false;
-      refreshDictationView();
-      if (!currentSession) loadNextSession({ autoplay: false });
-      else ensureDictationAudio({ autoplay: false });
-    } else {
-      // Leaving dictation: stop its loop, but keep its session in memory so
-      // returning is instant (re-press Dictation to resume same clip).
-      stopDictLoop();
-      clearAbLoop();
-      // Let Watch decide its own library/video visibility (goHome / setSource
-      // already manage hidden). Ensure dictation-only chrome is hidden from
-      // the band's flex layout.
-      dictView.hidden = true;
-      // Give the <audio> back. Always pause first: otherwise the dictation clip
-      // keeps playing under the Watch tab with its segment guard gone, and
-      // Watch's end-of-track auto-replay restarts the whole recording.
-      if (prevFeature === FEATURE_DICTATION) restoreWatchAudio();
-    }
-    updateTabsVisibility();
-    // Resize observer in Watch measures player height for --player-h; a feature
-    // switch changes band content height, so nudge it.
+  function initDictationView() {
+    document.body.classList.add("dictation-on");
+    if (dictView) dictView.hidden = false;
+    if (playerEl) playerEl.hidden = false;
+    // Resize observer in app-player.js measures player height for --player-h.
     requestAnimationFrame(() => {
       try { window.dispatchEvent(new Event("resize")); } catch {}
     });
   }
 
-  // The feature tabs overlay the video, so they must not sit on top of a movie.
-  // They belong to the library screen, where picking a feature makes sense; once
-  // an entry is playing the way out is the Library button in the player bar
-  // (goHome), not a tab pill floating over the picture.
-  //
-  // Driven off the library grid's own visibility — app-listen.js's setListen()
-  // does `libraryViewEl.hidden = state !== "idle"`, so "library visible" is
-  // exactly "nothing is playing". Observed rather than hooked, to keep the
-  // adaptation out of app-listen.js (see CLAUDE.md).
-  //
-  // Dictation always keeps the tabs: it hides the library grid wholesale via
-  // body.dictation-on, so hiding them there would strand the learner with no way
-  // back to Watch.
-  function updateTabsVisibility() {
-    if (!tabsEl) return;
-    const inDictation = currentFeature === FEATURE_DICTATION;
-    const libraryShowing = !!libraryViewEl && !libraryViewEl.hidden;
-    tabsEl.hidden = !(inDictation || libraryShowing);
-  }
-
-  if (libraryViewEl) {
-    new MutationObserver(updateTabsVisibility)
-      .observe(libraryViewEl, { attributes: true, attributeFilter: ["hidden"] });
-  }
-
-  function initFeature() {
-    let saved = null;
-    try { saved = localStorage.getItem(LS_FEATURE); } catch {}
-    setFeature(saved === FEATURE_DICTATION ? FEATURE_DICTATION : FEATURE_WATCH, { store: false });
-  }
-
-  if (tabWatch) tabWatch.addEventListener("click", () => setFeature(FEATURE_WATCH));
-  if (tabDict) tabDict.addEventListener("click", () => setFeature(FEATURE_DICTATION));
-
-  // Guard the Watch feature's global A-B loop clear on outside mousedown:
-  // that handler calls clearLoop() on any left-click outside the caption.
-  // In dictation we don't want a notepad click to kill the dictation loop.
-  // The Watch code lives in a closure we can't patch directly, but we can
-  // defensively re-arm our loop after its clearLoop fires (it nulls only its
-  // own loopStart). Our dLoopStart is separate, so no action needed — the
-  // dictation loop survives that handler by design. This comment is the
-  // invariant.
+  // The dictation loop (dLoopStart) is separate from the player module's own
+  // state, so nothing outside this file can clear it — no guard needed.
 
   // ---------------------------------------------------------------------------
   // Dictation — stats + session loading
@@ -401,14 +221,12 @@
 
   function applyDictRate() {
     if (!audioEl) return;
-    // Only while dictation owns the element — Watch plays at its own speed.
-    const rate = dictOwnsAudio ? dictRate : 1.0;
     try {
       audioEl.preservesPitch = true;
       audioEl.mozPreservesPitch = true;
       audioEl.webkitPreservesPitch = true;
     } catch {}
-    try { audioEl.playbackRate = rate; } catch {}
+    try { audioEl.playbackRate = dictRate; } catch {}
   }
 
   function setDictRate(rate, { persist = true } = {}) {
@@ -486,11 +304,11 @@
   function showDictRef() {
     if (dictRefEl) dictRefEl.hidden = false;
     if (dictRefPanel) dictRefPanel.hidden = false;
-    // The reference lives inside .player, in the Watch caption's slot. On the
+    // The reference lives inside .player, in the caption slot. On the
     // narrow layout (app.html's max-width:760px rules) the player boots collapsed
     // (body.player-collapsed, display:none) and only the floating broadcast
     // button re-opens it — so a Reveal there would show nothing at all. Open
-    // the player the way that button does: its click runs app-listen.js's
+    // the player the way that button does: its click runs app-player.js's
     // closure-private setPlayerCollapsed(false), which also re-measures
     // --player-h. On desktop the class is inert and the player is never
     // display:none, so this branch is never taken there.
@@ -638,7 +456,6 @@
   // ---------------------------------------------------------------------------
 
   // Momentary message in the header's loop-range slot, restored after a beat.
-  // Dictation has no access to Watch's flashHint() — it lives in that closure.
   let loopHintTimer = null;
   function flashLoopHint(msg) {
     if (!dictLoopRange) return;
@@ -709,11 +526,6 @@
 
   async function ensureDictationAudio({ autoplay = true } = {}) {
     if (!currentSession) return;
-    // loadNextSession awaits a network fetch before calling us, so by now the
-    // user may have gone back to Watch. Claiming the element here would point
-    // Watch's transport at a dictation clip AND strand dictOwnsAudio true, which
-    // would stop Watch persisting its position for the rest of the session.
-    if (currentFeature !== FEATURE_DICTATION) return;
     const src = apiBase() + "/api/library/" + encodeURIComponent(currentSession.entryId) + "/stream";
     const dStart = currentSession.start;
     const dEnd = currentSession.end;
@@ -730,14 +542,11 @@
     // this same entry, which the sameEntry branch below would otherwise leave
     // armed to drag the playhead back to the PREVIOUS segment's offset.
     const myLoad = ++dictLoadSeq;
-    // From here on dictation is driving the element, so Watch must stop
-    // persisting its position (see window.__dictationOwnsAudio).
-    dictOwnsAudio = true;
     applyDictRate();
 
     if (sameEntry && audioEl.src) {
       try { audioEl.currentTime = Math.max(0, dStart - D_LOOP_LEAD_IN); } catch {}
-      if (currentFeature === FEATURE_DICTATION) startDictLoop();
+      startDictLoop();
       if (autoplay) {
         if (audioEl.paused) {
           const p = audioEl.play();
@@ -749,18 +558,15 @@
       return;
     }
 
-    // New entry: point the shared <audio> at it. The Watch feature's
-    // currentEntry stays as-is — we deliberately don't call setSource() which
-    // would trigger a transcript fetch and video toggle.
+    // New entry: point the <audio> at it. No transcript fetch, no video —
+    // dictation loops a small window inside the segment's file.
     audioEl.src = src;
     try { audioEl.load(); } catch {}
     // Wait for metadata to know duration before seeking
     const seekToLoop = () => {
       audioEl.removeEventListener("loadedmetadata", seekToLoop);
-      // Same stale-listener hazard as restoreWatchAudio's seekBack: if the user
-      // leaves for Watch while this stream is still loading, this must NOT fire
-      // against whatever Watch loads next and drag it to the segment offset.
-      if (currentFeature !== FEATURE_DICTATION) return;
+      // Stale-listener hazard: a pending seek is only valid for the load that
+      // armed it — a newer session must not inherit this one's offset.
       if (myLoad !== dictLoadSeq) return;                 // a newer session superseded this one
       if (audioEl.getAttribute("src") !== src) return;
       try { audioEl.currentTime = Math.max(0, dStart - D_LOOP_LEAD_IN); } catch {}
@@ -774,7 +580,7 @@
     if (audioEl.readyState >= 1) seekToLoop();
     else audioEl.addEventListener("loadedmetadata", seekToLoop);
 
-    // Ensure player bar is enabled (Watch may have left it disabled when idle)
+    // Ensure player bar is enabled
     if (playBtn) playBtn.disabled = false;
     const backBtn = document.getElementById("ln-back");
     const fwdBtn = document.getElementById("ln-fwd");
@@ -788,10 +594,9 @@
   // precisely at dLoopEnd; do NOT restart on 'ended'.
   if (audioEl) {
     audioEl.addEventListener("play", () => {
-      if (currentFeature === FEATURE_DICTATION && (dLoopStart != null || abStart != null)) startDictLoop();
+      if (dLoopStart != null || abStart != null) startDictLoop();
     });
     audioEl.addEventListener("ended", () => {
-      if (currentFeature !== FEATURE_DICTATION) return;
       // An A-B loop whose end sits at the very end of the file reaches 'ended'
       // before the watcher catches it — send it round again rather than stopping.
       if (abStart != null) {
@@ -804,12 +609,12 @@
       stopDictLoop();
     });
     audioEl.addEventListener("seeked", () => {
-      if (currentFeature !== FEATURE_DICTATION || (dLoopStart == null && abStart == null)) return;
+      if (dLoopStart == null && abStart == null) return;
       if (!audioEl.paused) startDictLoop();
     });
   }
 
-  // The Watch ticker (150 ms) also re-arms a backgrounded loop; give
+  // The player ticker (150 ms) also re-arms a backgrounded loop; give
   // dictation the same safety via the same visibility hook (no extra work).
 
   // ---------------------------------------------------------------------------
@@ -848,7 +653,7 @@
     dictResultEl.hidden = false;
 
     // Reference paragraph — hidden until Reveal, words are clickable
-    // to trigger the same explanation panel as Watch (via window.__dictationExplain)
+    // to trigger the explanation panel (via window.__dictationExplain)
     dictRefEl.innerHTML = renderDictationReference(reference, currentSession && currentSession.words);
     // Re-checking rebuilds these spans, which drops .looping from a loop that is
     // still running — leaving the audio repeating a word with nothing on screen
@@ -865,7 +670,7 @@
   }
 
   // Moving to the next session invalidates the old session's explanation —
-  // close the shared panel via Watch's teardown (aborts any in-flight stream).
+  // close the explanation panel (aborts any in-flight stream).
   function closeExplanations() {
     if (typeof window.__dictationCloseExplanations === "function") {
       try { window.__dictationCloseExplanations(); } catch {}
@@ -979,9 +784,8 @@
   if (dictRetryBtn) dictRetryBtn.addEventListener("click", () => loadNextSession());
 
   // Explanation lookup on the Reference line: left-CLICK a word, or left-DRAG
-  // across several to ask about the whole phrase — the Watch caption's gesture
-  // (app-listen.js finishCaptionGesture), which this panel previously lacked.
-  // Driven off mousedown → mousemove → mouseup like the right-button loop below,
+  // across several to ask about the whole phrase. Driven off
+  // mousedown → mousemove → mouseup like the right-button loop below,
   // rather than a click listener, so a drag and a click are distinguishable and
   // the drag can paint a live preview.
   function explainFromRange(a, b) {
@@ -1017,10 +821,9 @@
   }
 
   // Right-click a Reference word to loop it, right-press-and-drag across words to
-  // loop the phrase — the Watch caption's gesture, on the dictation panel. The
-  // right button doesn't drag-select natively (it fires 'contextmenu', suppressed
-  // just below), so the whole gesture is driven off mousedown → mousemove → mouseup
-  // ourselves, exactly as app-listen.js does for the caption.
+  // loop the phrase. The right button doesn't drag-select natively (it fires
+  // 'contextmenu', suppressed just below), so the whole gesture is driven off
+  // mousedown → mousemove → mouseup ourselves.
   //
   // The two gestures keep SEPARATE state. Sharing one slot discriminated by a
   // button field meant a right press mid-left-drag overwrote it, stranding the
@@ -1129,11 +932,8 @@
     setAbLoopFromWords(ds.startIdx, ds.currentIdx);
   });
 
-  // The same reflex Watch has: ANY press other than the right button (which sets or
-  // extends the loop) stops it — click anywhere to stop looping. Scoped to the
-  // dictation feature so it never touches Watch's own loop.
-  // …with one difference Watch doesn't need: in Watch the caption IS the only
-  // surface, so "click anywhere" can only mean "somewhere that isn't the loop".
+  // ANY press other than the right button (which sets or extends the loop)
+  // stops it — click anywhere to stop looping.
   // Dictation's main surface is a textarea the learner must click to do the very
   // exercise the loop exists for, so the unmodified reflex reads as "start typing
   // to stop looping". Exempt only the surfaces where a press IS the exercise:
@@ -1141,22 +941,19 @@
   // there asks for an explanation of the very word you're looping). Deliberately
   // NOT the whole notepad wrap — that contains Check/Reveal, and a press on one of
   // those means the learner is done listening to the looped word. Every button, and
-  // the player bar, keeps the "a press means move on" reading that Watch's → arrow
-  // has.
+  // the player bar, keeps the "a press means move on" reading.
   const LOOP_KEEP_SEL = "#dictation-input, #dictation-result, #dictation-ref-panel";
   document.addEventListener("mousedown", (e) => {
     if (e.button === 2) return;
-    if (currentFeature !== FEATURE_DICTATION) return;
     if (abStart == null) return;
     if (e.target && e.target.closest && e.target.closest(LOOP_KEEP_SEL)) return;
     clearAbLoop();
   });
 
-  // Esc stops the loop, mirroring Watch. Allowed while the notepad has focus —
+  // Esc stops the loop. Allowed while the notepad has focus —
   // Escape types nothing, and a learner mid-sentence is exactly who wants it.
   document.addEventListener("keydown", (e) => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
-    if (currentFeature !== FEATURE_DICTATION) return;
     if (e.key !== "Escape" || abStart == null) return;
     e.preventDefault();
     clearAbLoop();
@@ -1173,10 +970,10 @@
     });
   }
 
-  // Allow the player bar's global Space handler to control the shared <audio>
+  // Allow the player bar's global Space handler to control the <audio>
   // even in dictation — no need to suppress. But when the textarea is focused
   // Space must type, so that global handler already bails when document.activeElement
-  // is a text field (see app-listen.js isEditableTarget) — no action needed.
+  // is a text field (see app-player.js isEditableTarget) — no action needed.
 
   // ---------------------------------------------------------------------------
   // Reference panel — touch-scroll quarantine (mirrors keepScrollInside)
@@ -1205,25 +1002,14 @@
   // Boot
   // ---------------------------------------------------------------------------
 
-  // initFeature() -> setFeature() already runs this exact guard
-  // (`if (!currentSession) loadNextSession(...)`) when it enters Dictation, so
-  // repeating it here fired a SECOND request: loadNextSession is async, so it
-  // returns at its first await with currentSession still null, and the guard
-  // below passed too. Both landed on /api/dictation/session, which picks
-  // uniformly at random (backend/dictation.js pickNextSession) — two different
-  // sessions racing to set currentSession, the title and the audio, last one
-  // winning. Nothing was lost (only Next marks a session complete), but it was
-  // a wasted round trip and a race. setFeature owns the load; boot only has to
-  // cover the Watch side, which it never calls refreshDictationView() for.
-  initFeature();
-  if (currentFeature !== FEATURE_DICTATION) refreshDictationView();
+  initDictationView();
+  refreshDictationView();
+  loadNextSession({ autoplay: false });
 
   // Expose for console debugging
   window.__dictation = {
     get session() { return currentSession; },
-    get feature() { return currentFeature; },
     get abLoop() { return abStart == null ? null : { start: abStart, end: abEnd }; },
-    setFeature,
     loadNextSession,
     checkCurrent,
     completeAndNext,

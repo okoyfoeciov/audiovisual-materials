@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#181818">
-<title>ComArt</title>
+<title>Daily Dictation</title>
 <script>
   // Early macOS detection so the first paint already clears the traffic lights.
   // titlebar.js also sets this class as a fallback once window.electronWindow is certain.
@@ -26,7 +26,7 @@
 <link rel="stylesheet" href="mic.css">
 <style>
   /* IPA glyphs (ə, ˈ, ˌ, ē …) render most reliably in Open Sans — used for the
-     Merriam-Webster pronunciation badges in the Listen feature only. Served
+     Merriam-Webster pronunciation badges in the explanation panel. Served
      from /fonts. */
   @font-face {
     font-family: "Open Sans";
@@ -89,7 +89,7 @@
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
     --shadow-hover: 0 8px 26px rgba(0, 0, 0, 0.55);
 
-    /* Listen feature */
+    /* Explanation panel + dictation */
     --border: rgba(255, 255, 255, 0.12);
     --text-soft: #c5c2bb;
     --text-dim: #78756f;
@@ -138,12 +138,11 @@
   }
 
   /* ======================================================================
-     LISTEN — movies, audio and podcasts served from this app's own local
-     media-library backend, with a synced transcript + word-by-word
-     explanations. The main region (the "band") holds the explanation panel and,
-     until an entry is loaded, the library list; the rolling 3-sentence transcript
-     window and a full-width bar at the page bottom make up the player.
-     (Inner class names are kept verbatim to match the Listen JS below.)
+     DICTATION — daily dictation sessions from PBS NewsHour (audio-only,
+     1–2 sentences per session, looped), with a notepad, a WER-based
+     checker, and a word-by-word explanation panel. The main region (the
+     "band") holds the dictation view and the explanation panel; a
+     reference caption and a full-width player bar sit at the page bottom.
      ====================================================================== */
 
   /* Explanation band — the page's main region, filling the whole area above the
@@ -204,265 +203,8 @@
   .panel-resize:hover::after,
   .panel-resize.dragging::after { opacity: 0.55; }
 
-  /* Centered loading spinner overlay (shown while a transcript loads). */
-  .band-loading {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 2;
-  }
-  .band-loading[hidden] { display: none; }
   /* While dragging, suppress text selection + pointer noise. */
   body.resizing { cursor: row-resize; user-select: none; -webkit-user-select: none; }
-
-  /* Library grid (the "home page") — fills the same region a video would
-     (order:-1, flex:1 1 auto), shown while nothing is loaded. A responsive
-     poster grid, one .lib-card per entry (see .lib-card below). */
-  .library-view {
-    position: relative;
-    order: -1;
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow-y: auto;
-    padding: 32px;
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-    gap: 28px 20px;
-    align-content: start;
-  }
-  .library-view[hidden] { display: none; }
-  .library-view .window-status { grid-column: 1 / -1; }
-
-  /* One card: cover, title, kind, continue-watching line. Bare button, no
-     surface — the cover art itself is the only "chrome". */
-  .lib-card {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    width: 100%;
-    padding: 0;
-    background: none;
-    border: 0;
-    text-align: left;
-    cursor: pointer;
-    font-family: var(--sans);
-  }
-  .lib-card:focus-visible { outline: none; }
-  .lib-card:focus-visible .lib-thumb { outline: 2px solid var(--accent); outline-offset: 3px; }
-  .lib-card-title {
-    font-family: var(--serif);
-    font-weight: 700;
-    font-size: 14.5px;
-    color: var(--text);
-    line-height: 1.3;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-  .lib-card-kind { font-size: 12.5px; color: var(--text-2); }
-  .lib-card-progress { font-size: 11.5px; color: var(--text-dim); }
-
-  /* Cover art for a grid card. A gradient+icon fallback always sits
-     underneath; the <img> just covers it when a poster.jpg exists (see
-     backend/poster.js) and stays hidden (onerror) when it 404s, which is the
-     common case for anything without cover art. */
-  .lib-thumb {
-    position: relative;
-    display: block;
-    width: 100%;
-    aspect-ratio: 2 / 3;
-    border-radius: 8px;
-    overflow: hidden;
-    background: var(--surface-2);
-    box-shadow: var(--shadow);
-    transition: transform 0.15s ease, box-shadow 0.15s ease;
-  }
-  .lib-card:hover .lib-thumb { transform: translateY(-3px); box-shadow: var(--shadow-hover); }
-  .lib-thumb img { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; object-fit: cover; display: block; }
-  .lib-thumb-fallback {
-    position: absolute;
-    inset: 0;
-    z-index: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: linear-gradient(160deg, hsl(var(--hue, 30) 35% 24%), hsl(calc(var(--hue, 30) + 35) 35% 12%));
-  }
-  .lib-thumb-fallback svg { width: 34%; height: 34%; color: rgba(255, 255, 255, 0.85); }
-
-  /* Back button for a nested view (a collection's children — e.g. the days
-     within a show, or the segments within a day). Absolutely positioned
-     within .library-view's own top/left padding, rather than a grid row of
-     its own — a grid row would push every card down when the button
-     appears, so the first card would sit lower on a nested page than on
-     the root grid. This way the grid layout is identical whether the
-     button is there or not; it just floats in space the padding already
-     reserves. */
-  .lib-list-back {
-    position: absolute;
-    top: 10px;
-    left: 32px;
-    margin: 0;
-    padding: 0;
-    background: none;
-    border: 0;
-    cursor: pointer;
-    font-family: var(--sans);
-    font-size: 13px;
-    color: var(--text-2);
-  }
-  .lib-list-back:hover { color: var(--text); }
-
-  /* ---------- video stage (any hasVideo library entry · desktop only) ----------
-     Fills the main region ABOVE the explanation panel while a video is shown
-     (order:-1, flex:1 1 auto). Letterboxed on pure black — not the warm page
-     background — since that is what reads as "picture" behind a frame that
-     can't fill the box; object-fit keeps the frame whole at any panel height. */
-  .video-window {
-    order: -1;
-    flex: 1 1 auto;
-    min-height: 0;
-    position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
-    background: #000;
-  }
-  .video-window[hidden] { display: none; }
-  /* Deliberately NO `controls`: the page's player bar is the only transport, and
-     the picture is muted and slaved to it (native controls would let the two
-     drift apart). Clicking the picture toggles play/pause — the one gesture a
-     video invites — hence the pointer cursor. */
-  .video-window video {
-    display: block;
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
-    background: #000;
-    cursor: pointer;
-  }
-  /* Belt and braces on the focus ring (see the element's comment): the picture is
-     a display surface, not a control — it is not in the tab order and every real
-     control keeps its ring, so there is no keyboard affordance to lose here. */
-  .video-window video:focus,
-  .video-window video:focus-visible { outline: none; }
-  /* In video mode the picture takes the WHOLE top of the page, so the band drops
-     its record-button clearance and the frame starts at y=0. Nothing is lost: the
-     button is fixed, so it keeps floating over the picture (drop-shadow above). */
-  body.video-on .explain-band { padding-top: 0; }
-
-  /* "Preparing…" / error overlay. Opaque, so a stale frame can never sit behind a
-     message about a picture that isn't there. */
-  .video-status {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 20px;
-    background: var(--bg);
-  }
-  .video-status[hidden] { display: none; }
-
-  /* Caption — the line being spoken, sitting at the top of the player like a
-     video's subtitles. Lives inside the .player block; centred, grows with the
-     line, and only scrolls if a sentence is unusually long. */
-  .now-window {
-    /* min-height = one caption line, so the box is the SAME height whether it
-       holds the loading spinner, a freshly-revealed first word, or a full line.
-       That kills the height jump when the transcript finishes loading. */
-    min-height: 40px;
-    max-height: 26vh;
-    overflow-y: auto;
-    /* Negative margin cancels most of the player's side gutter so a long line
-       runs nearly edge-to-edge. */
-    margin: 0 -14px;
-    padding: 2px 0 9px;
-    text-align: center;
-    user-select: none;
-    -webkit-user-select: none;
-    -webkit-touch-callout: none;   /* no iOS long-press callout — the hold is ours */
-  }
-  .now-window:empty { display: none; }
-  .chunk { font-family: var(--serif); line-height: 1.55; letter-spacing: 0; transition: color 0.3s ease; }
-  .chunk.current { font-size: 17px; font-weight: 600; color: var(--text); }
-  /* The preceding line, shown above the current one as a dimmed, already-spoken
-     subtitle. Dimmer than the current line but fully interactive — its words are
-     markable just like the current line's. Dim via COLOR (not opacity) so a
-     marked word can still light up to full brightness — a parent opacity would
-     cap its children and mute the mark. */
-  .chunk.context { font-size: 15px; font-weight: 400; color: var(--text-dim); margin: 0 0 2px; }
-
-  .word {
-    cursor: pointer;
-    padding: 1px 2px;
-    margin: 0 -2px;
-    border-radius: 4px;
-    transition: background 0.12s ease;
-  }
-  .word:hover { background: var(--word-hover); }
-  .word.marked, .word.marked:hover { background: var(--mark); color: var(--text); }
-  .word.marked:hover { background: var(--mark-hover); }
-  /* Words in the active A-B loop — set by right-clicking a word or right-dragging a
-     phrase; playback repeats over them until cleared (right-click again / Esc). A
-     soft accent tint plus the accent underline marks the looped span. (color-mix
-     may be unsupported on old engines — the underline alone still reads as the mark.) */
-  .word.looping {
-    box-shadow: inset 0 -2px 0 0 var(--accent);
-    background: color-mix(in srgb, var(--accent) 16%, transparent);
-    border-radius: 4px 4px 0 0;
-  }
-
-  /* Word-by-word reveal (karaoke). When the transcript carries per-word
-     timings, the caption gets the .reveal class: a word is not rendered at all
-     until it has been spoken (so the line grows as the speaker talks and there
-     are no blank gaps), then it appears. The word currently being spoken glows
-     in the accent colour. */
-  /* Reveal mode is LEFT-aligned: already-spoken words stay anchored on the left
-     while new ones extend to the right, so the eye never has to chase a moving
-     line (centred reveal re-centres on every word). The side padding restores
-     the player's gutter that the negative margin cancels. */
-  .now-window.reveal { text-align: left; padding-left: 14px; padding-right: 14px; }
-  .now-window.reveal .word { display: none; }
-  .now-window.reveal .word.spoken { display: inline; }
-  /* Keep looped words visible even if the reveal would hide them (e.g. after the
-     loop seeks back before them), so the loop marker never disappears while its
-     line is on screen. */
-  .now-window.reveal .word.looping { display: inline; }
-  /* The word being spoken is NOT colour-highlighted — words just appear in the
-     normal text colour as they're read (the .speaking class is still applied,
-     left unstyled in case we want to bring a highlight back later). */
-
-  .window-status {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 10px;
-    /* NO vertical padding: the spinner (22px) + the caption's own padding stays
-       under .now-window's 40px min-height, so the loading state and a one-line
-       caption are the exact same height — the bar no longer drops on load. */
-    padding: 0 16px;
-    text-align: center;
-    color: var(--text-dim);
-    font-size: 14px;
-    font-weight: 500;
-  }
-  /* An error status (a failed transcript) reads in the warning colour, not the
-     calm dim grey of a neutral/loading status. */
-  .window-status.error { color: var(--err); }
-  .spinner {
-    width: 22px; height: 22px;
-    border: 2.5px solid var(--border);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin 0.7s linear infinite;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
 
   .explain-content {
     flex: 1 1 auto;
@@ -478,9 +220,7 @@
     line-height: 1.65;
     color: var(--text);
   }
-  .now-window::-webkit-scrollbar,
   .explain-content::-webkit-scrollbar { width: 10px; }
-  .now-window::-webkit-scrollbar-thumb,
   .explain-content::-webkit-scrollbar-thumb {
     background: var(--border);
     background-clip: padding-box;
@@ -636,9 +376,9 @@
   }
 
   /* ---------- bottom player block (full width) ---------- */
-  /* Holds the synced caption (.now-window), an optional low-credit warning, and
-     the controls row (library · play · seek). It is the bottom flex child of
-     the body shell. */
+  /* Holds the reference caption (.dictation-ref-panel), an optional low-credit
+     warning, and the controls row (play · seek · loop). It is the bottom flex
+     child of the body shell. */
   .player {
     position: relative;
     flex: 0 0 auto;
@@ -663,7 +403,7 @@
   .audiobar { position: relative; display: flex; align-items: center; gap: 13px; touch-action: manipulation; }
   /* No circle, no surface: the button IS just its icon, matching the floating
      record / import buttons. The 34px box stays as an invisible touch target. */
-  .ab-menu, .ab-play, .ab-skip, .ab-collapse, .ab-loop {
+  .ab-play, .ab-skip, .ab-collapse, .ab-loop {
     flex: none;
     width: 34px; height: 34px;
     padding: 0;
@@ -683,24 +423,19 @@
   }
   /* Keyboard focus ring — there's no border/surface now, so the bare icon needs
      an outline to show focus. Matches the .pron-badge / record-button pattern. */
-  .ab-menu:focus-visible, .ab-skip:focus-visible,
+  .ab-skip:focus-visible,
   .ab-collapse:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
   /* Play never gets one — not the accent ring above, not the browser's own
-     default outline either. setSource() parks focus here on every load (so
-     Space is useful right away), and that shouldn't draw a ring around a
-     button nobody tabbed to. The dictation loop joins it: it keeps focus
-     after a mouse click, so hitting Space for play/pause would otherwise draw
-     the ring around a button nobody tabbed to. */
+     default outline either. The dictation loop keeps focus after a mouse
+     click, so hitting Space for play/pause would otherwise draw the ring
+     around a button nobody tabbed to. */
   .ab-play:focus-visible, .ab-play:focus,
   .ab-loop:focus-visible, .ab-loop:focus { outline: none; }
-  .ab-menu { color: var(--text-soft); }
-  .ab-menu:hover { color: var(--text); }
-  .ab-menu svg { width: 20px; height: 20px; display: block; }
   .ab-play { color: var(--accent); }
-  .ab-play:active, .ab-menu:active { transform: scale(0.94); }
+  .ab-play:active { transform: scale(0.94); }
   .ab-play:disabled { opacity: 0.4; cursor: default; }
   .ab-play svg { width: 20px; height: 20px; display: block; }
   /* Default state shows play, hides pause. The selector must out-specify
@@ -716,11 +451,11 @@
   .ab-skip:active { transform: scale(0.94); }
   .ab-skip:disabled { opacity: 0.4; cursor: default; }
   .ab-skip svg { width: 20px; height: 20px; display: block; }
-  /* Loop the dictation segment (dictation only — hidden in Watch, which has no
-     equivalent toggle). Dim like the other utility icons when off; switching it
-     on turns it the accent orange the play button already wears, and that colour
-     IS the "it is looping" signal — it replaces the filled pill this used to be
-     when it lived in the notepad's button row. Disabled until a session loads. */
+  /* Loop the dictation segment. Dim like the other utility icons when off;
+     switching it on turns it the accent orange the play button already wears,
+     and that colour IS the "it is looping" signal — it replaces the filled
+     pill this used to be when it lived in the notepad's button row. Disabled
+     until a session loads. */
   .ab-loop { display: none; color: var(--text-soft); }
   body.dictation-on .ab-loop { display: flex; }
   .ab-loop:hover { color: var(--text); }
@@ -789,7 +524,7 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .spinner, .thinking span { animation: none; }
+    .thinking span { animation: none; }
   }
 
   /* Stacked single-column layout on narrow screens. */
@@ -844,12 +579,6 @@
       border-radius: 2px;
       transform: translate(-50%, -50%);
     }
-    /* Video mode is desktop-only (the toggle isn't even reachable here) — but if a
-       desktop window is dragged narrow while it's on, the stage goes away instantly
-       rather than squeezing the panel + player off the screen. The JS also releases
-       the video on that same breakpoint crossing, so nothing keeps decoding behind
-       a display:none. */
-    .video-window { display: none; }
     .player {
       position: fixed;
       left: 0; right: 0; bottom: 0;
@@ -858,13 +587,14 @@
     }
 
     /* Touch devices have no arrow keys, so reveal the ← / → jump buttons and let
-       the bar wrap: transport controls (add · back · play · forward) on the top
-       row, the seek track + time on their own full-width row below — the standard
-       mobile player shape, and it keeps the seek bar wide enough to scrub. */
+       the bar wrap: transport controls (back · play · forward · loop · hide) on
+       the top row, the seek track + time on their own full-width row below — the
+       standard mobile player shape, and it keeps the seek bar wide enough to
+       scrub. */
     .ab-skip { display: flex; }
-    /* Spread the controls evenly across the row: space-between puts add-audio at
-       the left endpoint and hide at the right endpoint, with back · play ·
-       forward (and, in dictation, loop) evenly distributed between them. The
+    /* Spread the controls evenly across the row: space-between puts the first
+       transport button at the left endpoint and hide at the right endpoint,
+       with back · play · forward (and loop) evenly distributed between them. The
        seek row below is flex-basis:100% so it sits alone on its own line,
        unaffected. */
     .audiobar { flex-wrap: wrap; row-gap: 12px; justify-content: space-between; }
@@ -942,58 +672,10 @@
   .electron-titlebar-btn-max.is-maximized .icon-maximize { display: none; }
   .electron-titlebar-btn-max.is-maximized .icon-restore { display: block; }
 
-  /* ======================================================================
-     Feature tabs — Watch vs Daily Dictation. Floats in the empty space
-     above the library/video/dictation main area, so it never pushes the
-     film panels down (the user has "lots of space up there"). */
-  /* [hidden] has to beat display:flex, or hiding the tabs over a playing movie
-     does nothing. Third occurrence of this trap in this file — .dictation-stats,
-     .dictation-rate and .dictation-score all needed the same line. */
-  .feature-tabs[hidden] { display: none !important; }
-  .feature-tabs {
-    position: absolute;
-    top: 10px;
-    left: 32px;
-    z-index: 5;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    /* no border/background — sits on the band's own background */
-  }
-  .feature-tab {
-    appearance: none;
-    border: 1px solid transparent;
-    border-radius: 999px;
-    padding: 6px 14px;
-    font-family: var(--sans);
-    font-size: 13px;
-    font-weight: 600;
-    letter-spacing: -0.01em;
-    color: var(--text-2);
-    background: var(--surface);
-    cursor: pointer;
-    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
-  }
-  .feature-tab:hover { color: var(--text); border-color: var(--border); }
-  .feature-tab.active {
-    background: var(--accent);
-    color: #fff;
-    border-color: var(--accent);
-  }
-  .feature-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-
-  /* Tabs and the nested-view back button both float at 10,32 — without help
-     they sit on top of each other. When the back button is present, slide it
-     to the right of the tabs so both stay legible. Applies to all platforms
-     now that macOS uses the same frameless custom title bar as Linux. */
-  .explain-band:has(.lib-list-back) .lib-list-back {
-    left: 250px;
-  }
 
   /* ======================================================================
-     Dictation — audio-only notepad that replaces the video stage.
-     Same order/flex as .library-view / .video-window so they are
-     mutually exclusive full-bleed panels inside .explain-band. */
+     Dictation — audio-only notepad: the app's main view, a full-bleed panel
+     inside .explain-band. */
   .dictation-view {
     order: -1;
     flex: 1 1 auto;
@@ -1223,16 +905,15 @@
     margin: 0 -2px;
     border-radius: 4px;
     transition: background 0.12s ease;
-    /* The panel drives its own drag off mousedown/mousemove, as the Watch caption
-       does. Without this the browser's native text selection runs at the same
-       time and fights it. */
+    /* The reference drives its own drag off mousedown/mousemove. Without this
+       the browser's native text selection runs at the same time and fights it. */
     user-select: none;
     -webkit-user-select: none;
   }
   .dictation-ref .dictation-ref-word:hover { background: var(--word-hover, rgba(255,255,255,0.08)); }
-  /* A word inside the active A-B loop (right-click a word / right-drag a phrase),
-     same accent tint + underline the Watch caption uses. Restated here rather than
-     left to the shared .word.looping rule, which loses the cascade to
+  /* A word inside the active A-B loop (right-click a word / right-drag a phrase):
+     soft accent tint plus the accent underline. Restated on this selector
+     (rather than a shared rule) so it beats
      .dictation-ref .dictation-ref-word:hover the moment the cursor rests on it. */
   .dictation-ref .dictation-ref-word.looping,
   .dictation-ref .dictation-ref-word.looping:hover {
@@ -1241,8 +922,7 @@
     border-radius: 4px 4px 0 0;
   }
   /* Left-drag preview: the phrase about to be sent for an explanation, in the
-     same amber the Watch caption marks words with (--mark), so the two surfaces
-     read alike.
+     amber (--mark).
 
      Declared AFTER .looping deliberately. Both selectors have identical
      specificity, so order decides, and the loop paint would otherwise win the
@@ -1256,24 +936,12 @@
     color: var(--text);
     border-radius: 4px;
   }
-  /* Reference panel — the dictation tab's caption, and it lives where Watch's
-     caption lives: INSIDE .player, first thing above the controls (the markup
-     sits right after #ln-now, which body.dictation-on hides). It used to be a
-     band panel: its own border-top, on the band's background, stacked above
-     the player's border-top — a separate slab with a hairline under it, never
-     the subtitle strip Watch shows. It was also floored at two lines with the
-     text sunk to the bottom (to stop the top edge jumping when a sentence
-     wrapped), which is what made a one-line sentence sit in a 92px box.
-     Watch accepts that jump — the caption grows with its line — and so does
-     this now.
-
-     Every box metric on .dictation-ref-scroll is .now-window.reveal's: the
-     40px floor (one caption line), the 26vh cap, the -14px side margin against
-     .player's 16px gutter with the 14px side padding put back, 2px/9px vertical
-     padding, left-aligned. The type is .chunk.current's: serif 17px/1.55,
-     weight 600, --text. Watch also shows the previous line dimmed above the
-     current one; a dictation session is only its own sentence, so there is no
-     context line here. */
+  /* Reference panel — the session sentence, living INSIDE .player, first thing
+     above the controls. 40px floor (one caption line), 26vh cap, -14px side
+     margin against .player's 16px gutter with the 14px side padding put back,
+     2px/9px vertical padding, left-aligned; serif 17px/1.55, weight 600,
+     --text. A dictation session is only its own sentence, so there is no
+     context line. */
   .dictation-ref-panel {
     display: block;
   }
@@ -1330,48 +998,14 @@
     font-size: 14px;
   }
   .dictation-empty p { margin: 0 0 12px; }
-  /* In dictation mode the video stage is never shown, even if the entry
-     has hasVideo — audio-only by spec. */
-  body.dictation-on .video-window { display: none !important; }
-  /* When dictation is active, the library grid is hidden — the dictation
-     view owns the main region. */
-  body.dictation-on .library-view { display: none !important; }
-  /* Watch's subtitle caption is inside .player, and dictation deliberately keeps
-     the player visible (audio-only). Both features also share one #ln-audio, so
-     app-listen.js keeps painting Watch transcript lines into #ln-now against the
-     DICTATION clip's timeline — unrelated subtitles surfacing right above the
-     Reference line (the two share the caption slot in .player). .now-window:empty
-     can't collapse it: the content is live, not stale. Dictation has its own
-     reference caption; Watch's has no place here. */
-  body.dictation-on .now-window { display: none !important; }
-  /* Same story for the other Watch-owned things inside .player. The Library
-     button is wired to Watch's goHome(), which tears the src off the SHARED
-     <audio> — in dictation that silently kills the clip and repaints the grid
-     into a container the rule above keeps at display:none, so the click reads
-     as a no-op. Dictation has no library to go home to; the tabs are the way
-     back. NOTE: .ab-titlebar is deliberately NOT hidden with it — it carries
-     #ln-warn, the low-credit warning, and dictation raises that itself every
-     time a Reference word is explained. It collapses to 0px on its own via
-     .ab-warn[hidden], so there is nothing to hide. */
-  body.dictation-on .ab-menu { display: none !important; }
-  /* body.video-on drops the band's record-button clearance because in Watch the
-     picture owns the whole top of the page. That class survives a switch into
-     dictation, where there is no picture — just the floating tab pills, which
-     then land on top of the session title. Put the clearance back. */
-  body.video-on.dictation-on .explain-band { padding-top: 52px; }
-  /* The explanation panel is shared across both features by design, but it is
-     sized for Watch: flex-shrink 0 at --panel-h (60vh, up to 85vh once dragged).
-     In dictation the only flexible sibling is .dictation-view, so the whole
-     deficit lands on the notepad. Let the panel yield once the notepad hits a
-     floor that actually fits topbar + textarea + actions. */
+  /* The explanation panel flexes against the dictation view: it takes
+     --panel-h (60vh, up to 85vh once dragged) but yields once the notepad
+     hits a floor that actually fits topbar + textarea + actions. */
   body.dictation-on .explain-panel { flex: 0 1 var(--panel-h, 60vh); }
   /* An explanation panel is created on first use (makePanel) and never removed;
-     resetPanelThread only empties its content box. In Watch the video window
-     fills the band so an empty panel is invisible, but body.dictation-on hides
-     the video — leaving an empty 60vh slab that shoves the reference text far up
-     the screen. Switching back and forth between the views is exactly how you
-     hit it: one explanation anywhere, ever, and Dictation is permanently tall.
-     Collapse the panel while it holds nothing, handle included. */
+     resetPanelThread only empties its content box. Collapse the panel while it
+     holds nothing, handle included, so an empty 60vh slab never shoves the
+     notepad up the screen. */
   body.dictation-on .explain-panel:has(> .explain-content:empty) {
     flex-basis: 0;
     min-height: 0;
@@ -1382,10 +1016,8 @@
   }
   body.dictation-on .dictation-view { min-height: min(280px, 40vh); }
   @media (max-width: 760px) {
-    .feature-tabs { left: 16px; top: calc(10px + env(safe-area-inset-top)); }
     .dictation-view { padding-left: 16px; padding-right: 16px; }
     .dictation-textarea { font-size: 16px; min-height: 120px; }
-    .explain-band:has(.lib-list-back) .lib-list-back { left: 180px; }
   }
 </style>
 </head>
@@ -1412,26 +1044,9 @@
        player and holds the single explanation panel (R1, injected at runtime,
        see makePanel), anchored to the bottom at a draggable height. -->
   <div class="explain-band" id="ln-explain-band">
-    <!-- Feature tabs — Watch (library + transcript) vs Daily Dictation
-         (audio-only notepad, 1–2 sentences per session). Visible in both idle
-         and active states; the active feature owns the main region above the
-         player. -->
-    <div class="feature-tabs" id="ln-tabs" role="tablist" aria-label="Features">
-      <button class="feature-tab active" id="tab-watch" type="button" role="tab" aria-selected="true" data-feature="watch">Watch</button>
-      <button class="feature-tab" id="tab-dictation" type="button" role="tab" aria-selected="false" data-feature="dictation">Daily Dictation</button>
-    </div>
-
-    <!-- Loading spinner shown while a library entry's transcript is being
-         generated — no text, just the animation. -->
-    <div class="band-loading" id="ln-band-loading" hidden aria-label="Loading"><div class="spinner"></div></div>
-
-    <!-- Library list — shown when nothing is loaded (setListen("idle")) and
-         populated from GET /api/library; each row funnels into setSource(). -->
-    <div class="library-view" id="ln-library-view" hidden></div>
-
-    <!-- Dictation — audio-only notepad (replaces video in this feature).
+    <!-- Dictation — audio-only notepad (1–2 sentences per session).
          The whole PBS NewsHour segment is streamed but the player loops only
-         on the active 1–2 sentence session (see app-dictation.js). -->
+         on the active session (see app-dictation.js). -->
     <div class="dictation-view" id="dictation-view" hidden>
       <div class="dictation-topbar">
         <div class="dictation-session-meta" id="dictation-session-meta" hidden>
@@ -1465,36 +1080,16 @@
       </div>
     </div>
 
-    <!-- Video stage — any library entry with hasVideo, desktop only. The
-         <video> is MUTED and slaved to #ln-audio (the clock the transcript is
-         aligned to), holds no blob — its src is a plain URL the browser
-         Range-streams — and has that src removed the moment video mode goes
-         off, so nothing accumulates across a session. -->
-    <div class="video-window" id="ln-video" hidden aria-label="Video">
-      <!-- No tabindex on purpose: a <video> without `controls` isn't focusable,
-           and tabindex="-1" would make it CLICK-focusable — which is what put
-           Chrome's focus ring (white on a dark theme) around the picture the
-           moment an arrow key switched it to keyboard modality. -->
-      <video id="ln-video-el" muted playsinline webkit-playsinline preload="auto"
-             disablepictureinpicture></video>
-      <div class="video-status" id="ln-video-status" hidden></div>
-    </div>
-
   </div>
 
-  <!-- Full-width player block, pinned to the page bottom: the current-line
-       caption (subtitles) on top, then the controls row (library button ·
-       play · seek). The entry's title lives in the browser tab title. A low-credit
+  <!-- Full-width player block, pinned to the page bottom: the reference
+       caption on top, then the controls row (play · seek · loop). A low-credit
        warning, when present, shows just above the controls. -->
   <div class="player" id="ln-player" hidden>
-    <!-- Caption: the current line plus the preceding line (dimmed). Both are
-         markable; the LLM receives a 3-line window (those two plus the next
-         line). -->
-    <div class="now-window" id="ln-now" aria-live="polite"></div>
-    <!-- Dictation Reference — the dictation tab's caption, in the caption's
-         slot: the same box and type as #ln-now above (which body.dictation-on
-         hides, since app-listen.js keeps painting Watch lines into it). Shown
-         after Check → Reveal; see showDictRef in app-dictation.js. -->
+    <!-- Dictation Reference — the session sentence, shown after
+         Check → Reveal; see showDictRef in app-dictation.js. Left-click a word
+         (or drag across several) to ask the explanation panel about it;
+         right-click / right-drag to A-B loop it. -->
     <div class="dictation-ref-panel" id="dictation-ref-panel" hidden>
       <div class="dictation-ref-scroll" id="dictation-ref-scroll">
         <div class="dictation-ref" id="dictation-ref" hidden></div>
@@ -1504,12 +1099,6 @@
       <span class="ab-warn" id="ln-warn" hidden></span>
     </div>
     <div class="audiobar" id="ln-bar">
-      <!-- Library. Returns to the home grid (goHome()) — stops whatever's
-           loaded and shows every entry the backend has; re-picking one
-           resumes from its saved position. -->
-      <button class="ab-menu" id="ln-open" type="button" aria-label="Library" title="Library">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg>
-      </button>
       <!-- Jump back 5s. Mirrors the ← arrow key for touch devices, which have no
            keyboard. Hidden on desktop (CSS); shown on mobile, where the bar wraps
            the seek track down to its own row. -->
@@ -1524,9 +1113,7 @@
       <button class="ab-skip" id="ln-fwd" type="button" aria-label="Forward 5 seconds" title="Forward 5s" disabled>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/><text x="12" y="15.6" text-anchor="middle" font-size="9" font-weight="700" stroke="none" fill="currentColor">5</text></svg>
       </button>
-      <!-- Loop the dictation segment. Dictation-only (revealed by CSS on
-           body.dictation-on): Watch has no such toggle — its only loop is the
-           A-B one you set on the caption itself. It sits here rather than in the
+      <!-- Loop the dictation segment. It sits here rather than in the
            notepad's Check/Reveal row because looping is a transport concern; it
            belongs beside Play, not beside the grading buttons. Starts disabled —
            there is nothing to loop until a session has loaded. -->
@@ -1565,21 +1152,18 @@
     </svg>
   </button>
 
-<!-- Electron shell only, unrelated to comart's page: wires up the custom
-     title bar above on Linux/Windows. Runs before app-base.js/app-listen.js
-     on purpose, though order doesn't matter to either side. -->
+<!-- Electron shell: wires up the custom title bar above. Runs before the app
+     scripts on purpose, though order doesn't matter to either side. -->
 <script src="titlebar.js"></script>
 
-<!-- Cloned from comart's app.html (the Listen/audio-playback feature only —
-     Exscriptor's mic button, modal and CSS were originally removed, cleanly:
-     app-listen.js never depended on them). app-listen.js itself is untouched,
-     line for line. app-base.js FIRST: it is the one file here that is not
-     [A]'s, and app-listen.js reads it. -->
+<!-- app-base.js FIRST: resolves this app's own backend base URL for every
+     apiBase() call site below. -->
 <script src="app-base.js"></script>
-<script src="app-listen.js"></script>
-<!-- The floating microphone button, restored from comart's mic.js — see its
-      own header for what changed in the port. Loaded last and depends only on
-      app-base.js's apiBase(); app-listen.js is untouched by its presence. -->
+<!-- Transport + explanation panel: the shared <audio> player bar and the
+     word/phrase explanation engine dictation looks words up in. -->
+<script src="app-player.js"></script>
+<!-- The floating microphone button — see mic.js's own header. Depends only on
+     app-base.js's apiBase(). -->
 <script src="mic.js"></script>
 <!-- Daily Dictation — audio-only 1–2 sentence loops from PBS NewsHour,
      with a WER-based checker. See backend/dictation.js for the scoring

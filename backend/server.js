@@ -1,15 +1,15 @@
 "use strict";
 
-// The media-library backend. Serves the entry list, streams media files
-// (range-request capable, for seeking), serves pre-computed transcripts, and
-// persists per-entry playback progress. Embedded in the Electron app —
-// main.js starts it in-process via start() before the window loads, so the
-// app is a single local-only program with no separate backend process.
-// Reached at the loopback URL app-base.js resolves, same as the app used to
-// reach comart directly.
+// The dictation backend. Streams PBS segment media files (range-request
+// capable, for seeking) for Daily Dictation playback, serves the dictation
+// session/grading/scheduling API, and proxies the explanation, pronunciation,
+// credit, and mic-transcription calls through to comart. Embedded in the
+// Electron app — main.js starts it in-process via start() before the window
+// loads, so the app is a single local-only program with no separate backend
+// process. Reached at the loopback URL app-base.js resolves, same as the app
+// used to reach comart directly.
 
 const fs = require("fs");
-const path = require("path");
 const express = require("express");
 const db = require("./db");
 const paths = require("./paths");
@@ -29,10 +29,8 @@ app.use((req, res, next) => {
 });
 
 // The explain panel (word/phrase explanations, MW pronunciation badges,
-// credit warnings) is existing functionality that survived the library
-// rewrite unchanged on the frontend, but now resolves against this backend's
-// base URL instead of comart directly — so those three routes need to be
-// transparently proxied through to comart here. Raw body passthrough (not
+// credit warnings) is shared by Daily Dictation's reference-word lookup, so
+// those three routes are transparently proxied through to comart here. Raw body passthrough (not
 // express.json()) so arbitrary request shapes forward untouched.
 const EXPLAIN_PATHS = ["/api/explain", "/api/pron", "/api/credits"];
 app.all(EXPLAIN_PATHS, express.raw({ type: () => true, limit: "10mb" }), async (req, res) => {
@@ -204,33 +202,9 @@ app.post("/api/dictation/complete", (req, res) => {
   }
 });
 
-function toLibrarySummary(e) {
-  return {
-    id: e.id,
-    type: e.type,
-    title: e.title,
-    hasVideo: e.hasVideo,
-    durationSec: e.durationSec,
-    progressSec: e.progressSec || 0,
-    transcriptStatus: e.transcriptStatus,
-  };
-}
-
-// Top-level entries only — a segment (an entry with a parentId, e.g. one
-// PBS NewsHour clip belonging to an episode "collection" entry) is reached
-// via its parent's /children route below, not listed here.
-app.get("/api/library", (req, res) => {
-  res.json(db.listEntries().filter((e) => !e.parentId).map(toLibrarySummary));
-});
-
-// Segments belonging to a "collection" entry (see toLibrarySummary above).
-// Ordinary entries just have no children — an empty array, not an error.
-app.get("/api/library/:id/children", (req, res) => {
-  const entry = db.getEntry(req.params.id);
-  if (!entry) return res.sendStatus(404);
-  res.json(db.listChildren(req.params.id).map(toLibrarySummary));
-});
-
+// Media streaming for Daily Dictation playback. The dictation client loops a
+// small window inside the PBS segment's file, served here with HTTP Range +
+// conditional GET (via res.sendFile, which implements both), so seeking works.
 app.get("/api/library/:id/stream", (req, res) => {
   const entry = db.getEntry(req.params.id);
   if (!entry || !entry.filePath || !fs.existsSync(entry.filePath)) return res.sendStatus(404);
@@ -239,60 +213,6 @@ app.get("/api/library/:id/stream", (req, res) => {
   res.sendFile(entry.filePath, (err) => {
     if (err && !res.headersSent) res.sendStatus(404);
   });
-});
-
-// Cover art, looked up at import time (see backend/poster.js) and cached
-// alongside the media file. Not every entry has one (an obscure title or a
-// personal recording won't match anything on iTunes) — a 404 here is normal,
-// and the frontend falls back to a generated placeholder card on image error.
-// A nested collection with no cover art of its own (e.g. a day within a
-// show) falls back to its parent's poster, walking up the chain — most days
-// won't have individually fetched art, but the show usually does.
-app.get("/api/library/:id/poster", (req, res) => {
-  let entry = db.getEntry(req.params.id);
-  if (!entry) return res.sendStatus(404);
-  while (entry) {
-    // entry.dir is set at import time for every entry, media or collection.
-    // Older entries imported before that field existed only have filePath,
-    // so fall back to its directory for them.
-    const dir = entry.dir || (entry.filePath && path.dirname(entry.filePath));
-    const posterPath = dir && path.join(dir, "poster.jpg");
-    if (posterPath && fs.existsSync(posterPath)) return res.sendFile(posterPath);
-    entry = entry.type === "collection" && entry.parentId ? db.getEntry(entry.parentId) : null;
-  }
-  return res.sendStatus(404);
-});
-
-app.get("/api/library/:id/transcript", (req, res) => {
-  const entry = db.getEntry(req.params.id);
-  if (!entry) return res.sendStatus(404);
-  if (entry.transcriptStatus === "ready") {
-    try {
-      const data = JSON.parse(fs.readFileSync(entry.transcriptPath, "utf8"));
-      return res.json(data);
-    } catch {
-      return res.sendStatus(404);
-    }
-  }
-  if (entry.transcriptStatus === "pending" || entry.transcriptStatus === "processing") {
-    return res.status(202).json({ status: entry.transcriptStatus });
-  }
-  return res.sendStatus(404);
-});
-
-app.get("/api/library/:id/progress", (req, res) => {
-  const entry = db.getEntry(req.params.id);
-  if (!entry) return res.sendStatus(404);
-  res.json({ positionSec: entry.progressSec || 0 });
-});
-
-app.post("/api/library/:id/progress", (req, res) => {
-  const entry = db.getEntry(req.params.id);
-  if (!entry) return res.sendStatus(404);
-  const positionSec = Number(req.body && req.body.positionSec);
-  if (!Number.isFinite(positionSec) || positionSec < 0) return res.sendStatus(400);
-  db.setProgress(req.params.id, positionSec);
-  res.sendStatus(204);
 });
 
 // In-process lifecycle for the Electron shell (main.js). Idempotent:
@@ -310,7 +230,7 @@ function start({ port = DEFAULT_PORT, libraryDir = null } = {}) {
     const s = app.listen(port, "127.0.0.1", () => {
       server = s;
       livePort = port;
-      console.log(`av-materials backend listening on http://127.0.0.1:${port}`);
+      console.log(`daily-dictation backend listening on http://127.0.0.1:${port}`);
       resolve(s);
     });
     s.on("error", reject);
@@ -331,7 +251,7 @@ function stop() {
 // `npm run backend`. The Electron app path is start() from main.js.
 if (require.main === module) {
   start().catch((err) => {
-    console.error(`av-materials backend failed to listen: ${err.message}`);
+    console.error(`daily-dictation backend failed to listen: ${err.message}`);
     process.exitCode = 1;
   });
 }

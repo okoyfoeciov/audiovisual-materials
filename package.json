@@ -1,7 +1,7 @@
 {
-  "name": "audiovisual-materials",
+  "name": "daily-dictation",
   "version": "1.0.7",
-  "description": "Standalone desktop media-library player, backed by a local backend (backend/), clone of comart's Listen (audio playback) feature",
+  "description": "Standalone desktop daily-dictation drill (PBS NewsHour audio, WER grading, word explanations), backed by a local backend (backend/)",
   "private": true,
   "main": "main.js",
   "scripts": {
@@ -20,15 +20,15 @@
     "electron-builder": "^25.1.8"
   },
   "build": {
-    "appId": "com.audiovisual-materials.app",
-    "productName": "Audiovisual Materials",
+    "appId": "com.daily-dictation.app",
+    "productName": "Daily Dictation",
     "files": [
       "main.js",
       "preload.js",
       "titlebar.js",
       "app.html",
       "app-base.js",
-      "app-listen.js",
+      "app-player.js",
       "app-dictation.js",
       "mic.css",
       "mic.js",
