@@ -1,15 +1,12 @@
 (function () {
   "use strict";
 
-  /* Player — a dictation-only audio transport + AI-explanation engine.
-     Owned by Daily Dictation (app-dictation.js): it shares this file's <audio>
-     element and bottom player bar (play/pause/seek/time/back-fwd/collapse/
-     keyboard/ticker), and drives explanations through window.__dictationExplain
+  /* Player — dictation's audio transport + AI-explanation engine. Owned by
+     Daily Dictation (app-dictation.js): it shares this file's <audio> element
+     and bottom player bar (play/pause/seek/time/back-fwd/collapse/keyboard/
+     ticker), and drives explanations through window.__dictationExplain
      (single panel, drill-down rounds, pronunciation badges, credits warning).
-     There is no library grid, no caption, no stored progress and no picture
-     here — dictation sets the audio source itself and this file just plays it.
-     Wrapped in its own IIFE so it can't collide with the exscriptor script
-     above. */
+     Dictation sets the audio source itself and this file just plays it. */
 
   /* ---------- render helpers ---------- */
 
@@ -35,19 +32,6 @@
     preposition: "prep.", conjunction: "conj.",
     interjection: "interj.", pronoun: "pron.",
   };
-
-  function tokenize(text) {
-    const re = new RegExp(WORD_RE.source, WORD_RE.flags);
-    const out = [];
-    let last = 0, m;
-    while ((m = re.exec(text)) !== null) {
-      if (m.index > last) out.push({ type: "sep", value: text.slice(last, m.index) });
-      out.push({ type: "word", value: m[0] });
-      last = re.lastIndex;
-    }
-    if (last < text.length) out.push({ type: "sep", value: text.slice(last) });
-    return out;
-  }
 
   function escapeHtml(s) {
     return String(s)
@@ -84,16 +68,6 @@
 
   function badgeKey({ word, pos }) {
     return `${word.toLowerCase()}|${(pos || "").toLowerCase()}`;
-  }
-
-  function dedupeItems(items) {
-    const seen = new Set(); const out = [];
-    for (const it of items) {
-      const key = (it.phrase || "").toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key); out.push(it);
-    }
-    return out;
   }
 
   function parsePronAttrs(body) {
@@ -189,22 +163,22 @@
   let ticker = null;
   // While a programmatic seek (arrow keys / track click) is in flight, Chrome
   // keeps reporting the OLD audioEl.currentTime until the seek actually lands.
-  // Reading it to drive the caption made the transcript lag the audio when
-  // seeking fast, and reading it as the base for the next ±5s jump made rapid
-  // presses under-shoot. Track the intended target and treat it as the source
-  // of truth until 'seeked' confirms the audio caught up. null = not seeking.
+  // Reading it to paint the time made the bar lag the audio when seeking
+  // fast, and reading it as the base for the next ±5s jump made rapid presses
+  // under-shoot. Track the intended target and treat it as the source of
+  // truth until 'seeked' confirms the audio caught up. null = not seeking.
   let seekTarget = null;
   function effPos() { return seekTarget != null ? seekTarget : (audioEl.currentTime || 0); }
 
 
-  // A single explanation panel off the caption (O). Each new O
+  // The single explanation panel for the reference line. Each new reference
   // selection refreshes it (overrides the previous one); inside it the answers
-  // form a drill-down chain R1 → R2 → … (one round each). Picking a word/phrase
-  // in round R_k regenerates R_(k+1) and drops every round after it, so the chain
-  // only ever grows from the round you pick on. Resizable (see the resize block).
+  // form a drill-down chain (one round each). Picking a word/phrase in round
+  // R_k regenerates R_(k+1) and drops every round after it, so the chain only
+  // ever grows from the round you pick on. Resizable (see the resize block).
   const MAX_PANELS = 1;
   const panels = [];          // sparse: panels[slot] or undefined
-  let oSelectionCount = 0;    // total caption selections so far
+  let oSelectionCount = 0;    // total reference selections so far
 
   // pronunciation cache
   const pronCache = new Map();
@@ -230,19 +204,11 @@
   // handlers ignore mouse input until then so the selection can't double-fire.
   let suppressMouseUntil = 0;
   const mouseSuppressed = () => performance.now() < suppressMouseUntil;
-  // opts.onPress/onRelease (optional): run the instant a finger lands on a word,
-  // and when the gesture ends WITHOUT committing. The caption uses them to freeze
-  // immediately on touch-down — otherwise the 150ms ticker could rebuild the line
-  // (new token array) during the 280ms hold and the long-press would seed off a
-  // stale span. (A committed gesture's own finish() handles unfreezing.)
-  function enableTouchWordSelect(container, wordSel, begin, extend, finish, opts) {
-    opts = opts || {};
+  function enableTouchWordSelect(container, wordSel, begin, extend, finish) {
     let timer = null, active = false, pressed = false, sx = 0, sy = 0, span0 = null;
     const HOLD_MS = 280, MOVE_TOL = 10;
     const cancelTimer = () => { if (timer) { clearTimeout(timer); timer = null; } };
-    // A committed drag stays frozen until it finishes — don't let a stray second
-    // finger (pinch guard) unfreeze it mid-gesture.
-    const release = () => { if (active || !pressed) return; pressed = false; if (opts.onRelease) opts.onRelease(); };
+    const release = () => { if (active || !pressed) return; pressed = false; };
     container.addEventListener("touchstart", (e) => {
       if (e.touches.length !== 1) { cancelTimer(); release(); return; }   // a second finger = pinch
       const t = e.touches[0];
@@ -250,7 +216,7 @@
       if (!span) return;
       span0 = span; sx = t.clientX; sy = t.clientY; active = false;
       cancelTimer();
-      pressed = true; if (opts.onPress) opts.onPress();
+      pressed = true;
       timer = setTimeout(() => {
         timer = null;
         if (begin(span0) === false) return;   // nothing to select here
@@ -262,7 +228,7 @@
       const t = e.touches[0]; if (!t) return;
       if (!active) {
         // Still waiting on the hold: any real movement means the user is
-        // scrolling, so drop the timer (and unfreeze) and let the page scroll.
+        // scrolling, so drop the timer and let the page scroll.
         if (Math.abs(t.clientX - sx) > MOVE_TOL || Math.abs(t.clientY - sy) > MOVE_TOL) { cancelTimer(); release(); }
         return;
       }
@@ -274,7 +240,7 @@
     const done = () => {
       cancelTimer();
       if (active) { active = false; pressed = false; suppressMouseUntil = performance.now() + 450; finish(); }
-      else release();   // a tap or abandoned hold → undo the onPress (e.g. unfreeze)
+      else release();   // a tap or abandoned hold
       span0 = null;
     };
     container.addEventListener("touchend", done);
@@ -284,7 +250,7 @@
   // Keep a touch-scroll that starts inside `scroller` from leaking to the page
   // behind it. On mobile the page itself scrolls and the explanation panel floats
   // over it (position:sticky), so a touch on the panel that the panel can't use
-  // for its own scroll falls through and scrolls the article underneath instead.
+  // for its own scroll falls through and scrolls the page underneath instead.
   // CSS overscroll-behavior:contain covers this only on newer browsers AND only
   // when the panel's content actually overflows — older iOS Safari ignores it, and
   // a short explanation that fits the panel has nothing to scroll, so either way
@@ -320,7 +286,8 @@
   /* ---------- panels: create / allocate / reset ---------- */
 
   // Build the panel: a top-edge resize handle + a scrolling content box, plus
-  // its thread state. Anchored to the bottom of the band (nearest the caption).
+  // its thread state. Anchored to the bottom of the band (nearest the
+  // reference line).
   function makePanel(slot) {
     const el = document.createElement("div");
     el.className = "explain-panel";
@@ -349,7 +316,7 @@
   }
 
   // Clear a panel's thread back to empty and abort any in-flight request — used
-  // when a slot is reused by a newer caption selection.
+  // when a slot is reused by a newer reference selection.
   function resetPanelThread(panel) {
     if (panel.inFlight) { try { panel.inFlight.abort(); } catch {} panel.inFlight = null; }
     panel.rounds = []; panel.streamItems = []; panel.threadText = "";
@@ -359,7 +326,7 @@
     panel.contentEl.innerHTML = "";
   }
 
-  // Pick the panel a brand-new caption selection should fill: the next slot in
+  // Pick the panel a brand-new reference selection should fill: the next slot in
   // round-robin order, creating it the first time and reusing (resetting) it
   // afterwards.
   function nextPanelForSelection() {
@@ -386,17 +353,18 @@
   }
 
   // A drag in progress inside an explanation panel — the same click-a-word /
-  // drag-a-phrase gesture as the caption, adapted to the response's word spans
-  // (which are keyed by rid, not a flat index array, so the range is computed
-  // over the block's spans in document order). Shared module-wide because only
-  // one mouse drags at a time; a single window-level mouseup (below) commits it
-  // and fires, so a release outside the panel still finishes cleanly. mousedown
-  // wipes every prior mark first, so the snapshot is a clean slate — one
-  // contiguous word/phrase is ever live, exactly like O.
+  // drag-a-phrase gesture as the reference line, adapted to the response's word
+  // spans (which are keyed by rid, not a flat index array, so the range is
+  // computed over the block's spans in document order). Shared module-wide
+  // because only one mouse drags at a time; a single window-level mouseup
+  // (below) commits it and fires, so a release outside the panel still finishes
+  // cleanly. mousedown wipes every prior mark first, so the snapshot is a clean
+  // slate — one contiguous word/phrase is ever live, exactly like the reference
+  // line.
   let panelDrag = null;
 
   // Repaint the dragged run: every span outside [a,b] keeps its snapshot mark;
-  // every span inside flips it. Mirrors the caption's applyDragRange.
+  // every span inside flips it. Mirrors the reference line's paintMarkRange.
   function applyPanelDragRange(ds) {
     const { panel, spans, snapshot, startIdx, currentIdx } = ds;
     const a = Math.min(startIdx, currentIdx), b = Math.max(startIdx, currentIdx);
@@ -416,17 +384,18 @@
 
   // Wipe every response mark across all rounds. A new pick starts from a clean
   // slate so only one contiguous word/phrase is ever selected — the same
-  // one-highlight-at-a-time model as O (the caption).
+  // one-highlight-at-a-time model as the reference line.
   function clearResponseMarks(panel) {
     panel.responseMarks.clear();
     for (const sp of panel.contentEl.querySelectorAll(".response-word.marked")) sp.classList.remove("marked");
   }
 
-  // Commit + fire on release, exactly like O: a click sends the one word, a drag
-  // sends the one contiguous phrase, and it explains the instant the mouse comes
-  // up — no "leave the block to ask" step. mousedown already cleared every other
-  // mark, so only this single run is live; disjoint multi-word/phrase picks
-  // aren't possible here, matching O.
+  // Commit + fire on release, exactly like the reference line: a click sends the
+  // one word, a drag sends the one contiguous phrase, and it explains the
+  // instant the mouse comes up — no "leave the block to ask" step. mousedown
+  // already cleared every other mark, so only this single run is live;
+  // disjoint multi-word/phrase picks aren't possible here, matching the
+  // reference line.
   function finishPanelGesture() {
     if (!panelDrag) return;
     const ds = panelDrag; panelDrag = null;
@@ -443,9 +412,9 @@
   // Picking on round R_(k+1) — the answer rendered in `block` (data-round = k) —
   // regenerates the NEXT round and drops every round after it, so the answers
   // form a single drill-down chain instead of an ever-growing stack. slice keeps
-  // rounds[0..k] (R1..R_(k+1)) as the model's history; triggerExplain then
-  // appends the fresh next round below them, overriding the old R_(k+2) and
-  // emptying everything past it.
+  // the first k+1 rounds as the model's history; triggerExplain then appends
+  // the fresh next round below them, overriding the old R_(k+2) and emptying
+  // everything past it.
   function firePanelSelection(panel, block, items) {
     const k = Number(block.dataset.round);
     if (Number.isInteger(k)) panel.rounds = panel.rounds.slice(0, k + 1);
@@ -454,7 +423,8 @@
 
   // Per-panel picks: click a word, or drag across a contiguous run, inside a
   // response — it fires the instant you release (see the window mouseup above),
-  // the same gesture as O, restricted to one word or one contiguous phrase.
+  // the same gesture as the reference line, restricted to one word or one
+  // contiguous phrase.
   function wirePanelEvents(panel) {
     // mousedown starts the gesture; mousemove extends the run to the word under
     // the cursor. The range is taken over the spans of the block the drag began
@@ -502,18 +472,18 @@
     // Touch: hold a word in the answer, then drag across it to select a phrase.
     enableTouchWordSelect(panel.contentEl, ".response-word",
       (span) => beginPanelPick(span), extendPanelPick, finishPanelGesture);
-    // Touch: scroll the answer without leaking the gesture to the article behind it.
+    // Touch: scroll the answer without leaking the gesture to the page behind it.
     keepScrollInside(panel.contentEl);
   }
 
 
   /* ---------- explanation flow ---------- */
 
-  // Start (or, for a follow-up, extend) one panel's thread. Each panel owns its
-  // own AbortController, so the three panels stream in parallel — a new request
-  // only aborts the SAME panel's previous one. For a fresh selection the panel's
-  // rounds are already empty (history = []); for a follow-up the prior rounds
-  // are sent as history and the new answer is appended below them.
+  // Start (or, for a follow-up, extend) the panel's thread. The panel owns its
+  // own AbortController, so a new request only aborts the panel's previous one.
+  // For a fresh selection the rounds are already empty (history = []); for a
+  // follow-up the prior rounds are sent as history and the new answer is
+  // appended below them.
   async function triggerExplain(panel, items) {
     if (panel.inFlight) { try { panel.inFlight.abort(); } catch {} }
     panel.streamItems = items;
@@ -648,7 +618,7 @@
     // panel (contentEl.innerHTML) on every chunk resets the scroll container's
     // scrollTop and, on mobile, tears the container down under the user's finger —
     // which hands an in-progress touch-scroll off to the page, scrolling the
-    // article instead of the panel (and only sorts itself out once streaming ends
+    // page instead of the panel (and only sorts itself out once streaming ends
     // and the rebuilds stop). Touching only the live block leaves the scroll
     // container, its scrollTop, and the committed rounds intact, so the panel
     // stays scrollable while text streams in.
@@ -971,18 +941,6 @@
     } catch {}
   }
 
-  /* ---------- reset helpers ---------- */
-
-  function resetThread() {
-    // Tear down every panel and reset the round-robin counter — a new episode
-    // starts with a clean, empty band.
-    teardownAllPanels();
-  }
-
-
-
-
-
   /* ---------- audio bar wiring ---------- */
 
   function togglePlay() {
@@ -1003,7 +961,7 @@
     if (isFinite(d) && d > 0) t = Math.min(t, d);
     seekTarget = t;
     try { audioEl.currentTime = t; } catch {}
-    // Failsafe: if 'seeked' never fires, don't strand the caption on the target.
+    // Failsafe: if 'seeked' never fires, don't strand the time display on the target.
     setTimeout(() => { if (seekTarget === t) seekTarget = null; }, 1000);
     paintTime();
   }
@@ -1040,15 +998,15 @@
   // clear a newer, still-pending target.
   audioEl.addEventListener("seeked", () => {
     // Tight tolerance: a 0.5s slop could clear the override after the audio had
-    // drifted onto a different caption chunk; 0.15s still absorbs normal seek
+    // drifted somewhere unexpected; 0.15s still absorbs normal seek
     // inaccuracy, and the 1s failsafe covers a keyframe-snapped landing.
     if (seekTarget != null && Math.abs((audioEl.currentTime || 0) - seekTarget) < 0.15) {
       seekTarget = null;
     }
   });
   // If the file can't be decoded/played (unsupported codec, corrupt bytes, a
-  // revoked URL) the element fires 'error'. Without this the caption ticker would
-  // keep scrolling against a dead clock with no sound and no explanation. The
+  // revoked URL) the element fires 'error'. Without this the time display would
+  // keep advancing against a dead clock with no sound and no explanation. The
   // 150ms ticker self-pauses on audioEl.error; here we just tell the user.
   audioEl.addEventListener("error", () => {
     if (!audioEl.src) return;                          // ignore the empty-src reset
@@ -1083,12 +1041,12 @@
   // On Apple Silicon, Firefox tears down its CoreAudio output stream on pause
   // and rebuilds it from scratch on every seek (Mozilla bug 1134263; the M1
   // Mac-mini symptom match is bug 1876668). That rebuild sometimes fails
-  // SILENTLY: currentTime keeps advancing — so the caption ticker keeps
-  // scrolling — but no sound comes out, until another seek forces a fresh
-  // rebuild. Users hit it after resume or an arrow-key jump and fix it by hand
-  // by clicking elsewhere on the seek bar. We do that automatically: after a
+  // SILENTLY: currentTime keeps advancing — so the time display keeps moving —
+  // but no sound comes out, until another seek forces a fresh rebuild. Users
+  // hit it after resume or an arrow-key jump and fix it by hand by clicking
+  // elsewhere on the seek bar. We do that automatically: after a resume or a
   // resume or a seek, give the output a sub-perceptible currentTime "nudge"
-  // (~10 ms) to force the stream to re-arm. It's well under the 150 ms caption
+  // (~10 ms) to force the stream to re-arm. It's well under the 150 ms time
   // tick and inaudible, but it is a REAL new seek target — assigning currentTime
   // to itself is a no-op in Firefox and would not rebuild the stream. It can't
   // be a 100% guarantee (the defect is in Firefox), but it makes the silence
@@ -1099,7 +1057,7 @@
   function wakeAudioOutput() {
     if (nudging || fixingDuration) return;            // don't fight the duration probe
     // Bail on a dead element or while a user seek is still pending — a nudge mid-seek
-    // would fight the in-flight ± jumps and could strand the caption override.
+    // would fight the in-flight ± jumps and could strand the seek override.
     if (!audioEl.src || audioEl.error || audioEl.paused || audioEl.seeking || seekTarget != null) return;
     const d = audioEl.duration;
     if (!isFinite(d) || d <= 0) return;               // need a known duration to clamp
@@ -1198,11 +1156,11 @@
       // Space belongs to the player, full stop. A button keeps focus after being
       // clicked, so the browser's native "Space activates the focused button"
       // would re-fire it — click a pronunciation badge, hit Space, and the clip
-      // replays instead of the episode pausing. Buttons stay reachable with
-      // Enter. The recorder modal is the one exception: it has its own clip
+      // replays instead of the segment pausing. Buttons stay reachable with
+      // Enter. The mic transcript card is the one exception: it has its own clip
       // player, so a button inside it keeps native Space.
       const ae = document.activeElement;
-      if (ae && ae.closest && ae.closest("#ex-modal")) return;
+      if (ae && ae.closest && ae.closest(".mic-modal")) return;
       e.preventDefault();
       togglePlay();
     }
@@ -1211,8 +1169,8 @@
   /* ---------- resizable panel height ----------
      The explanation panel's height (--panel-h, set on the band) is dragged via
      the handle on its top edge — it grows upward, its bottom pinned near the
-     caption. Desktop only; pointer events cover mouse + touch, arrow keys nudge
-     for a11y. Persisted to localStorage. */
+     reference line. Pointer events cover mouse + touch, arrow keys nudge for
+     a11y. Persisted to localStorage. */
   const isDesktopBand = () => window.matchMedia("(min-width: 761px)").matches;
   // Desktop and mobile each remember their own panel height — a height that feels
   // right on a wide screen would swamp a phone, and vice-versa.
@@ -1220,6 +1178,8 @@
   // allowed to shrink below --panel-h so the notepad keeps its floor, so a drag
   // made while squeezed starts from a squeezed box and would otherwise persist
   // that squeezed height as the normal one.
+  // The "zx-" key prefix is kept as-is so existing installs don't lose their
+  // saved heights.
   const panelHKey = () => {
     const base = isDesktopBand() ? "zx-panel-h" : "zx-panel-h-mobile";
     return document.body.classList.contains("dictation-on") ? base + "-dictation" : base;
@@ -1252,10 +1212,10 @@
      On desktop the player is in normal flow, so it pushes the band up and never
      overlaps it. On mobile the player is position:fixed (so it stays put while
      the page scrolls), which means we must reserve its height ourselves —
-     otherwise a tall current-line caption makes the dark player float up over
-     the text. We measure the player's real height (it already includes its
+     otherwise a tall reference line makes the dark player float up over the
+     text. We measure the player's real height (it already includes its
      safe-area padding) and feed it to the band as --player-h; the mobile rules
-     size the band around it. Kept in sync as the caption grows and shrinks.
+     size the band around it. Kept in sync as the reference grows and shrinks.
      Harmless on desktop, where the CSS doesn't read --player-h. */
   function syncPlayerReserve() {
     const h = Math.ceil(playerEl.getBoundingClientRect().height);
@@ -1270,12 +1230,12 @@
   window.addEventListener("orientationchange", syncPlayerReserve);
   syncPlayerReserve();
 
-  /* ---------- mobile: collapse the player to a floating broadcast button ----------
+  /* ---------- mobile: collapse the player to a floating show-player button ----------
      Mobile only (the CSS gates every rule to the max-width:760px media query).
-     Collapsing hides the whole player — caption, controls and seek — and floats
-     a broadcast button (.ln-fab, bottom-right, styled like the record button) to
-     bring it back. The page boots collapsed (body.player-collapsed in the markup)
-     so the reader gets the full screen until they want the controls. */
+     Collapsing hides the whole player — reference, controls and seek — and
+     floats a show-player button (.ln-fab, bottom-right) to bring it back. The
+     page boots collapsed (body.player-collapsed in the markup) so the learner
+     gets the full screen until they want the controls. */
   function setPlayerCollapsed(collapsed) {
     document.body.classList.toggle("player-collapsed", collapsed);
     // aria-expanded reflects the player's visibility on both toggles.

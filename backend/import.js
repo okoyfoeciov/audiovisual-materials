@@ -11,16 +11,15 @@
 //
 // importMedia() copies the source into library/<type>s/<slug>/ (the
 // original is never moved or deleted), probes it with ffprobe for
-// duration/video-stream presence, registers it in the DB, looks up cover
-// art, then transcribes it once via comart's Parakeet-backed pipeline and
-// stores the transcript alongside the file.
+// duration/video-stream presence, registers it in the DB, then transcribes
+// it once — clean Parakeet or verbatim Crisper (see backend/transcribe.js)
+// — and stores the transcript alongside the file.
 
 const fs = require("fs");
 const path = require("path");
 const { execFileSync } = require("child_process");
 const db = require("./db");
 const { transcribe, transcribeVerbatim, sha256File } = require("./transcribe");
-const { fetchPoster } = require("./poster");
 
 function slugify(title) {
   return title
@@ -101,15 +100,9 @@ async function importMedia({ sourcePath, type, title, id, parentId, verbatim = f
     durationSec,
     sha256,
     transcriptStatus: "pending",
-    progressSec: 0,
     ...(parentId ? { parentId } : {}),
   });
   console.log(`Registered entry "${entry.id}" (durationSec=${durationSec}, hasVideo=${hasVideo}).`);
-
-  console.log("Looking up cover art...");
-  const posterPath = path.join(destDir, "poster.jpg");
-  const gotPoster = await fetchPoster(title, type, posterPath);
-  console.log(gotPoster ? `Cover art saved: ${posterPath}` : "No cover art found — will use a placeholder.");
 
   const transcriptPath = path.join(destDir, "transcript.json");
   db.upsertEntry({ id: slug, transcriptStatus: "processing", transcriptPath });
@@ -118,7 +111,6 @@ async function importMedia({ sourcePath, type, title, id, parentId, verbatim = f
   try {
     const fn = verbatim ? transcribeVerbatim : transcribe;
     const transcript = await fn(destPath, {
-      sha256,
       onProgress: (msg) => console.log(`  [transcribe] ${msg}`),
     });
     fs.writeFileSync(transcriptPath, JSON.stringify(transcript));
@@ -159,7 +151,7 @@ async function main() {
     }
     try {
       const entry = await createCollection({ title: args.title, id: args.id, parentId: args.parent });
-      console.log(`Registered collection "${entry.id}". Drop a poster.jpg into ${entry.dir} for cover art (optional) — automatic lookup is skipped for collections since iTunes/Wikipedia won't have a match.`);
+      console.log(`Registered collection "${entry.id}".`);
     } catch (err) {
       console.error(err.message);
       process.exitCode = 1;
@@ -188,4 +180,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { importMedia, createCollection, slugify };
+module.exports = { importMedia, createCollection };

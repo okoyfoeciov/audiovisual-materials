@@ -1,11 +1,10 @@
 // preload.js — Electron-shell-only, like main.js. Bridges the frameless-window
-// controls (minimize/maximize/close, drag-to-move) into the sandboxed renderer;
-// see titlebar.js for the side that consumes this. Not part of comart's page.
+// controls (minimize/maximize/close) into the sandboxed renderer; see
+// titlebar.js for the side that consumes this.
 
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("electronWindow", {
-  platform: process.platform,
   minimize: () => ipcRenderer.send("window:minimize"),
   toggleMaximize: () => ipcRenderer.send("window:toggle-maximize"),
   close: () => ipcRenderer.send("window:close"),

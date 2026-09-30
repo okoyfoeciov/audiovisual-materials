@@ -1,31 +1,15 @@
-// mic.js — the floating microphone button, restored. See mic.css's header:
-// app.html's own script-tag comment says this was "removed, cleanly" when
-// the page was cloned from comart; this ports it back from comart's mic.js,
-// path-for-path for the button, icons, states, card and drag — see comart's
-// README "The microphone" section for the UX contract this reproduces:
-// press to record, press again to stop and transcribe, the transcript opens
-// in a draggable card with a player so you can hear what you said while you
-// read it, and the text is copied to your clipboard automatically.
+// mic.js — the floating microphone button: press to record, press again to
+// stop and transcribe. The transcript opens in a draggable card with a player
+// so you can hear what you said while you read it, and the text is copied to
+// your clipboard automatically.
 //
-// WHAT'S DIFFERENT FROM COMART'S COPY, and why it's simpler here. Comart's
-// mic.js is a REMOTE CONTROL: it runs as a content script on someone else's
-// page, so the actual recording happens in an extension-owned offscreen
-// document (background.js/offscreen.js) and every button here just sends a
-// chrome.runtime message and draws what comes back — the whole reason is
-// that Chrome files a microphone grant under the TOP-LEVEL origin, so a
-// mic opened from inside a foreign page would belong to that page, not to
-// comart. None of that applies to this app: this page IS the app's own
-// origin, exactly like comart's own app.html (app-exscriptor.js), so the
-// microphone is requested and held right here, and the recorded clip plays
-// from a real <audio> element instead of a remoted one. Also dropped:
-// comart's --cmtm-z browser-zoom cancellation (this app has no page-zoom
-// feature to cancel) and the double-injection guard (this script is loaded
-// exactly once, not injected per-tab by an extension).
+// This page IS the app's own origin, so the microphone is requested and held
+// right here and the recorded clip plays from a real <audio> element.
 //
-// The transcription endpoint is the SAME one comart's own button calls —
-// server.js proxies /api/transcribe straight through to comart's local
-// server, so the response shape (including a failed transcription's detail)
-// is identical and failMessage() below is ported unchanged.
+// The transcription endpoint is this app's own backend, which proxies
+// /api/transcribe straight through to comart's local server — so the response
+// shape (including a failed transcription's detail) is comart's, and
+// failMessage() below maps it.
 
 (() => {
   "use strict";
@@ -244,8 +228,7 @@
   }
 
   /* ---------------------------------------------------------------- *
-   * Playback — a real <audio> element, played directly (comart's copy
-   * plays it from an offscreen document and remotes every control here).
+   * Playback — a real <audio> element, played directly.
    * ---------------------------------------------------------------- */
 
   function playState() {
@@ -274,12 +257,11 @@
     audioEl.src = clipUrl;
   }
 
-  // A new recording replaces whatever clip is currently loaded — comart's own
-  // start() does this too ("a new recording replaces the one you were
-  // playing"). Without it, pressing the button again while the transcript
-  // card is open leaves the OLD clip playing audibly for the whole new
-  // recording, only actually stopping once the new one finishes and
-  // loadClip() overwrites audioEl.src out from under it.
+  // A new recording replaces whatever clip is currently loaded. Without this,
+  // pressing the button again while the transcript card is open leaves the OLD
+  // clip playing audibly for the whole new recording, only actually stopping
+  // once the new one finishes and loadClip() overwrites audioEl.src out from
+  // under it.
   function dropClip() {
     try { audioEl.pause(); } catch (_) {}
     if (clipUrl) { try { URL.revokeObjectURL(clipUrl); } catch (_) {} clipUrl = null; }
@@ -311,7 +293,7 @@
     modal.hidden = false;
     requestAnimationFrame(() => modal.classList.add("mic-show"));
     // Plays back the moment the transcript opens, so you hear what you said
-    // while reading it — same as comart's own card.
+    // while reading it.
     const p = audioEl.play();
     if (p && p.catch) p.catch(() => {});
   }
@@ -438,9 +420,8 @@
     }
   }
 
-  // Same mapping as comart's own — this app's backend proxies straight
-  // through to comart's /api/transcribe, so the response shape (Groq status
-  // included) is identical.
+  // The backend proxies straight through to comart's /api/transcribe, so the
+  // response shape (Groq status included) is comart's.
   function failMessage(status, data) {
     const gs = data && data.groqStatus;
     let reason;

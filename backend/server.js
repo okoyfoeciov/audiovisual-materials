@@ -6,8 +6,7 @@
 // credit, and mic-transcription calls through to comart. Embedded in the
 // Electron app — main.js starts it in-process via start() before the window
 // loads, so the app is a single local-only program with no separate backend
-// process. Reached at the loopback URL app-base.js resolves, same as the app
-// used to reach comart directly.
+// process. Reached at the loopback URL app-base.js resolves.
 
 const fs = require("fs");
 const express = require("express");
@@ -15,7 +14,8 @@ const db = require("./db");
 const paths = require("./paths");
 
 const DEFAULT_PORT = Number(process.env.PORT) || 8768;
-// This machine already is nuc-15-pro — comart runs locally.
+// comart's local server, which backs the explain/pron/credits/transcribe
+// proxies below.
 const COMART_BASE = "http://127.0.0.1:8770";
 const app = express();
 
@@ -30,8 +30,9 @@ app.use((req, res, next) => {
 
 // The explain panel (word/phrase explanations, MW pronunciation badges,
 // credit warnings) is shared by Daily Dictation's reference-word lookup, so
-// those three routes are transparently proxied through to comart here. Raw body passthrough (not
-// express.json()) so arbitrary request shapes forward untouched.
+// those three routes are transparently proxied through to comart here. Raw
+// body passthrough (not express.json()) so arbitrary request shapes forward
+// untouched.
 const EXPLAIN_PATHS = ["/api/explain", "/api/pron", "/api/credits"];
 app.all(EXPLAIN_PATHS, express.raw({ type: () => true, limit: "10mb" }), async (req, res) => {
   try {
@@ -52,11 +53,11 @@ app.all(EXPLAIN_PATHS, express.raw({ type: () => true, limit: "10mb" }), async (
 
 // The floating microphone button's transcription call (mic.js) — a single
 // short recording POSTed as a raw audio blob, proxied straight through to
-// comart's own /api/transcribe (same service backend/transcribe.js's chunked
-// long-file protocol talks to, different endpoint: this one is comart's
-// one-shot short-clip path, capped client-side at 60s). Raw body passthrough,
-// same shape as the EXPLAIN_PATHS proxy above, sized for a ~60s opus clip
-// (well under 1MB) with headroom.
+// comart's own /api/transcribe (a one-shot short-clip endpoint, capped
+// client-side at 60s — distinct from the chunked long-file protocol
+// backend/transcribe.js uses for import-time transcription). Raw body
+// passthrough, same shape as the EXPLAIN_PATHS proxy above, sized for a
+// ~60s opus clip (well under 1MB) with headroom.
 app.post("/api/transcribe", express.raw({ type: () => true, limit: "20mb" }), async (req, res) => {
   try {
     const upstream = await fetch(`${COMART_BASE}/api/transcribe`, {
@@ -111,18 +112,15 @@ app.get("/api/dictation/session", (req, res) => {
       });
     }
     const s = pick.session;
-    const entry = db.getEntry(s.entryId);
     res.json({
       sessionId: s.sessionId,
       entryId: s.entryId,
       entryTitle: s.entryTitle,
-      hasVideo: !!(entry && entry.hasVideo),
       start: s.start,
       end: s.end,
       duration: s.duration,
       wordCount: s.wordCount,
       wpm: s.wpm,
-      difficulty: dictation.difficulty(s),
       // Per-word ASR timings for this segment, so the client can loop a phrase
       // inside it (right-click / right-drag on a reference word). [] when the
       // transcript can't be read — the client falls back to segment-only replay.
@@ -256,4 +254,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { app, start, stop, DEFAULT_PORT };
+module.exports = { start, stop, DEFAULT_PORT };

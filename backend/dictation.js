@@ -56,6 +56,8 @@ const path = require("path");
 const db = require("./db");
 const paths = require("./paths");
 
+// Resolved per call (not a captured constant) so a setLibraryDir() call from
+// the packaged app takes effect without re-requiring this module.
 function dictationPath() {
   return paths.getDictationPath();
 }
@@ -162,9 +164,6 @@ const ALGORITHM_VERSION = 2;
 // same entry, and rekeys the item when it resolves that way.
 // ---------------------------------------------------------------------------
 
-// Dictation state path — resolved per call (not a captured constant) so a
-// setLibraryDir() call from the packaged app takes effect without
-// re-requiring this module.
 function emptyState() {
   return { algorithmVersion: ALGORITHM_VERSION, items: {}, updatedAt: 0 };
 }
@@ -824,7 +823,7 @@ function getAllSessionsDetailed() {
     if (!rec) continue;
     // A transcript this badly damaged is excluded wholesale: its surviving
     // sessions are as likely to be artefacts as the rejected ones, and serving
-    // them lets one bad episode contribute as much practice as a clean one.
+    // them lets one bad entry contribute as much practice as a clean one.
     if (rec.rejectRatio > TUNING.MAX_ENTRY_REJECT_RATIO) {
       console.warn(
         `dictation: excluding ${e.id} — ${(rec.rejectRatio * 100).toFixed(0)}% of ` +
@@ -970,13 +969,13 @@ function applyAttemptSchedule(item, score, now) {
   if (item.reps >= TUNING.RETIRE_REPS && score >= TUNING.RETIRE_SCORE) item.retired = true;
 }
 
-/** Weighted draw over entries, so one long episode can't own the practice. */
+/** Weighted draw over entries, so one long segment can't own the practice. */
 function pickEntry(pool, rand) {
   const byEntry = new Map();
   for (const s of pool) byEntry.set(s.entryId, (byEntry.get(s.entryId) || 0) + 1);
   const entries = [...byEntry.keys()];
   if (entries.length <= 1) return entries[0];
-  // sqrt weighting: a 90-session episode gets more draws than a 30-session one,
+  // sqrt weighting: a 90-session entry gets more draws than a 30-session one,
   // but 3x the material no longer means 3x the airtime.
   const weights = entries.map((id) => Math.sqrt(byEntry.get(id)));
   const total = weights.reduce((a, b) => a + b, 0);
@@ -1418,38 +1417,14 @@ function gradeDictation(reference, hypothesis) {
   return levenshteinWords(normalizeWords(reference), normalizeWords(hypothesis));
 }
 
+// Everything else in this module is internal to the pipeline: the two
+// functions server.js consumes from the scheduling side, plus the corpus
+// lookups its routes need.
 module.exports = {
-  get DICTATION_PATH() { return dictationPath(); },
-  ALGORITHM_VERSION,
-  TUNING,
-  // state
-  loadState,
-  saveState,
-  resolveItem,
-  recordAttempt,
   getProgress,
-  // segmentation
-  stripChyrons,
-  unitsFromWords,
-  splitUnitByPause,
-  partitionTranscript,
-  isSessionValid,
-  hasRepetitionLoop,
-  longestCollapsedRun,
-  dropStitchDuplicates,
-  // corpus
-  getPBSEntries,
-  getAllSessionsDetailed,
+  pickNextSession,
+  recordAttempt,
   getSessionWords,
   getSessionById,
-  // scheduling
-  difficulty,
-  pSuccess,
-  scoreCandidate,
-  applyAttemptSchedule,
-  pickNextSession,
-  // grading
-  normalizeWords,
-  levenshteinWords,
   gradeDictation,
 };

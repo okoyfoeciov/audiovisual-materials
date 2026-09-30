@@ -1,41 +1,17 @@
 /* mic.css — the floating microphone button and its transcript card.
-
-   Restores what app.html's own script-tag comment says was "removed,
-   cleanly" when this app was cloned from comart: [A]'s Exscriptor trigger,
-   by way of comart's mic.js/mic.css — the content-script version comart
-   draws on every page, bottom-right, asked for in these words: "I want the
-   same floating microphone icon button on all pages!" Ported path-for-path
-   (icons, states, drag, copy) — see mic.js's header for what changed and
-   why.
-
-   Unlike comart's copy, this page is not injected into someone else's site:
-   there is no foreign stylesheet to outrank (no !important), no unknown
-   background to read against (comart's halo is kept anyway — see .mic-btn —
-   since this app's own video posters/thumbnails can still sit behind the
-   button), and no browser page-zoom to cancel (comart's --cmtm-z). What's
-   kept is the 1.4x grow comart added for a button competing with someone
-   else's page furniture — asked-for, and what the screenshot everyone is
-   matching against actually shows — via the same technique comart used:
-   CSS `zoom` on the button, so every value below is [A]'s own number,
-   scaled together, and "make it bigger again" stays a one-line change. */
+   Fixed bottom-right; a halo keeps the bare glyph readable over whatever
+   content sits behind it. The 1.4x grow is via CSS `zoom` on the button, so
+   every value below scales together and "make it bigger again" stays a
+   one-line change. */
 
 .mic {
   position: fixed;
-  /* comart's own 16px, exactly — not adjusted for this app's .player bar.
-     Two earlier passes here (84px, then 66px) nudged the button up to clear
-     the bar, on the theory that colliding with it was a bug. It isn't: the
-     whole point of comart's own placement, ported verbatim into mic.js's
-     header, is that the button does NOT move to avoid other content —
-     "a button that moves whenever an answer appears is not a fixed
-     control... it simply floats over it" — and the halo below exists
-     specifically so the glyph stays readable over whatever's underneath. A
-     plain 16px does sit over .player's own controls; that's the design, the
-     same way comart's own button sits over its explanation panel. */
+  /* Bottom-right, over whatever is underneath — a button that moves to avoid
+     other content is not a fixed control. The halo on .mic-btn below exists
+     so the glyph stays readable wherever it lands. */
   bottom: 16px;
   right: 16px;
-  /* Matches the slot app.html already reserved for it — see its z-index: 55
-     comment ("below the record button (60)"), left over from before this
-     feature was stripped. */
+  /* Above the show-player button (55) — see its z-index comment in app.html. */
   z-index: 60;
   display: flex;
   justify-content: flex-end;

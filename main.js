@@ -22,13 +22,10 @@ function createWindow() {
     icon: path.join(__dirname, "build", "icons", "256x256.png"),
     backgroundColor: "#181818", // matches app.html's <meta name="theme-color">
     show: false,
-    // The app has no header of its own to sit under a native title-bar row,
-    // so a native one is just a bare strip over black content. Previously
-    // macOS inset real traffic lights straight onto the dark background
-    // (hiddenInset) while Linux/Windows went fully frameless with a custom
-    // bar of our own (see titlebar.js/preload.js). Per feedback the macOS
-    // build now looks exactly like Linux — frameless with the same custom
-    // right-side controls — so hiddenInset is no longer used on any platform.
+    // Frameless on every platform, with a custom title bar of our own (see
+    // titlebar.js/preload.js) — the app has no header of its own to sit under
+    // a native title-bar row, so a native one is just a bare strip over dark
+    // content.
     frame: false,
     webPreferences: {
       contextIsolation: true,
@@ -50,10 +47,10 @@ function createWindow() {
     win.show();
   });
 
-  // Keep the custom title bar's maximize/restore icon (Linux/Windows only —
-  // see titlebar.js) in sync with state changes that don't originate from its
-  // own button: the launch-time maximize() above, the OS's own maximize
-  // shortcut, or a drag to/from a screen edge.
+  // Keep the custom title bar's maximize/restore icon (see titlebar.js) in
+  // sync with state changes that don't originate from its own button: the
+  // launch-time maximize() above, the OS's own maximize shortcut, or a drag
+  // to/from a screen edge.
   const notifyMaximizedChange = () => win.webContents.send("window:maximized-changed", win.isMaximized());
   win.on("maximize", notifyMaximizedChange);
   win.on("unmaximize", notifyMaximizedChange);

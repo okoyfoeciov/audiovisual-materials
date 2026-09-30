@@ -50,31 +50,6 @@ function upsertEntry(entry) {
   return getEntry(entry.id);
 }
 
-function getProgress(id) {
-  const entry = getEntry(id);
-  return entry ? entry.progressSec || 0 : 0;
-}
-
-function setProgress(id, positionSec) {
-  const data = load();
-  const entry = data.entries.find((e) => e.id === id);
-  if (!entry) return false;
-  entry.progressSec = positionSec;
-  entry.updatedAt = Date.now();
-  save(data);
-  return true;
-}
-
-function setTranscriptStatus(id, status) {
-  const data = load();
-  const entry = data.entries.find((e) => e.id === id);
-  if (!entry) return false;
-  entry.transcriptStatus = status;
-  entry.updatedAt = Date.now();
-  save(data);
-  return true;
-}
-
 function deleteEntry(id) {
   const data = load();
   const before = data.entries.length;
@@ -84,18 +59,13 @@ function deleteEntry(id) {
 }
 
 module.exports = {
-  // Dynamic getters so a setLibraryDir() call (packaged app pointing at
+  // A dynamic getter so a setLibraryDir() call (packaged app pointing at
   // <userData>/library) takes effect even though db.js was already required.
   // import.js reads db.LIBRARY_DIR at import time per call, so this stays correct.
   get LIBRARY_DIR() { return paths.getLibraryDir(); },
-  get DB_PATH() { return paths.getDbPath(); },
-  setLibraryDir: paths.setLibraryDir,
   listEntries,
   getEntry,
   listChildren,
   upsertEntry,
   deleteEntry,
-  getProgress,
-  setProgress,
-  setTranscriptStatus,
 };

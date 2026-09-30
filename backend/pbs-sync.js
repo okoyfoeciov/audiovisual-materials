@@ -1,10 +1,13 @@
 "use strict";
 
-// Daily sync: pulls new PBS NewsHour segments into the library as
-// video, under a "PBS NewsHour" collection grouped by day (see
-// backend/import.js's header for how collections nest).
+// Daily sync: pulls new PBS NewsHour segments into the library, grouped
+// under a "PBS NewsHour" collection by day (see backend/import.js's header
+// for how collections nest).
 //
 //   node backend/pbs-sync.js
+//
+// The downloads are video files, but the app only ever plays their audio
+// track (dictation loops a 1–2 sentence window inside the segment).
 //
 // PBS NewsHour's own site only syndicates segments as audio
 // (https://www.pbs.org/newshour/feeds/rss/podcasts/segments) — no video RSS
@@ -188,19 +191,6 @@ function downloadWithYtDlp(url, videoId) {
   return { dir: tmpDir, filePath: path.join(tmpDir, files[0]) };
 }
 
-// importMedia()'s built-in cover-art lookup (backend/poster.js) searches
-// iTunes by title, which is built for looking up actual movies/podcasts/
-// albums — a news-segment headline like "National parks under strain from
-// Trump's..." either finds nothing or, worse, a plausible-looking but
-// wrong match (a movie or podcast that happens to share keywords). The
-// video's own YouTube thumbnail is always the correct image for it, so
-// fetch that directly and overwrite whatever iTunes found (or didn't).
-async function downloadYoutubeThumbnail(videoId, destPath) {
-  const res = await fetch(`https://img.youtube.com/vi/${videoId}/hqdefault.jpg`);
-  if (!res.ok) throw new Error(`thumbnail fetch failed: HTTP ${res.status}`);
-  fs.writeFileSync(destPath, Buffer.from(await res.arrayBuffer()));
-}
-
 // Day ids are "<SHOW_ID>-YYYY-MM-DD", which sorts correctly as plain
 // strings — no separate stored date field needed.
 function pruneOldDays() {
@@ -239,9 +229,7 @@ async function sync({ dryRun = false } = {}) {
   if (skipped.length) console.log(`  skipped (no RSS match, likely a full episode/Short/other upload): ${skipped.join(" | ")}`);
 
   const known = new Set(db.listEntries().map((e) => e.sourceId).filter(Boolean));
-  // Import order becomes display order (db.listChildren returns entries in
-  // insertion order — see server.js), so sort by broadcast time explicitly
-  // rather than relying on however the YouTube feed happened to list them.
+  // Import oldest-first so entry creation order follows broadcast time.
   const toImport = matched
     .filter((seg) => !known.has(seg.videoId))
     .sort((a, b) => new Date(a.pubDate) - new Date(b.pubDate));
@@ -278,15 +266,10 @@ async function sync({ dryRun = false } = {}) {
       console.log(`Downloading "${seg.title}" (${seg.url}) ...`);
       const { dir, filePath } = downloadWithYtDlp(seg.url, seg.videoId);
       try {
-        // PBS dictation segments use verbatim Crisper (keeps you know) so
-        // Watch stays clean via Parakeet while dictation is scored verbatim.
+        // Verbatim Crisper transcription keeps fillers ("you know", "um") in
+        // the reference, which is what the dictation checker scores against.
         const entry = await importMedia({ sourcePath: filePath, type: "movie", title: seg.title, parentId: dayId, verbatim: true });
         db.upsertEntry({ id: entry.id, sourceId: seg.videoId });
-        try {
-          await downloadYoutubeThumbnail(seg.videoId, path.join(entry.dir, "poster.jpg"));
-        } catch (err) {
-          console.error(`  thumbnail fetch failed for "${seg.title}": ${err.message}`);
-        }
         console.log(`Imported "${seg.title}" as "${entry.id}".`);
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
@@ -316,5 +299,3 @@ if (require.main === module) {
     process.exitCode = 1;
   });
 }
-
-module.exports = { sync, normalizeTitle, parseSegmentsRss, parseYoutubeFeed };

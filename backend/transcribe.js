@@ -1,26 +1,26 @@
 "use strict";
 
-// Ports the chunked-upload protocol app-listen.js used to run client-side
-// against comart's /api/transcript/* endpoints (which proxied the self-hosted
-// Parakeet STT service), now run once server-side at import time instead of
-// once per session. As of 2026-09-13 this talks to Parakeet (127.0.0.1:8790)
-// directly — comart removed /api/transcript/* once a repo-wide check found no
-// caller left but this file (see comart's back-end/README.md history). Error
-// bodies below are matched against parakeet-ov/service.py's actual FastAPI
-// shape ({detail: "..."}), not comart's old browser-facing {error: "..."}
-// envelope, since nothing here renders to a browser. Constants match
-// app-listen.js:1483-1488 exactly so this stays protocol-compatible with what
-// Parakeet itself expects (that was always the real contract; comart only
-// proxied it).
+// Transcription clients for the two self-hosted STT services, run once
+// server-side at import time (backend/import.js, backend/pbs-sync.js) instead
+// of once per playback session.
 //
-// NOT ported: comart's SQLite sha256->transcript cache (30-day TTL). This
-// file has one caller family (import.js / pbs-sync.js), and every transcript
-// it produces is already persisted once, permanently, at
-// library/<type>s/<slug>/transcript.json (db.js's transcriptPath/
-// transcriptStatus) — a second content-addressed cache in front of that would
-// only help re-importing byte-identical media under a new entry, and db.js is
-// a plain JSON file by design (see its own header comment), not a database
-// this would fit into without adding one just for this.
+//   transcribe()         — clean transcript via Parakeet (127.0.0.1:8790),
+//                          chunked-upload protocol. Used for manual CLI imports.
+//   transcribeVerbatim() — verbatim transcript via CrisperWhisper 2.0 medium
+//                          (127.0.0.1:8789 — keeps "you know", "um"), single-shot
+//                          multipart POST, suited to small PBS clips. Used by
+//                          pbs-sync, since the dictation checker scores against
+//                          the verbatim reference.
+//
+// Both services are gated by the same bearer token. Error bodies are the
+// services' own FastAPI shape ({detail: "..."}), since nothing here renders
+// to a browser.
+//
+// No result cache here: every transcript produced is persisted permanently at
+// library/<type>s/<slug>/transcript.json, so a second content-addressed cache
+// in front of that would only help re-importing byte-identical media under a
+// new entry — not worth a database db.js deliberately refuses to become (see
+// its header: plain JSON by design).
 
 const fs = require("fs/promises");
 const { createReadStream, statSync } = require("fs");
@@ -34,9 +34,8 @@ const TX_QUEUED_LIMIT = 3600;    // ~4 h queued — matches the service's queue 
 
 const PARAKEET_URL = process.env.PARAKEET_URL || "http://127.0.0.1:8790";
 
-// Daily dictation uses CrisperWhisper2.0 medium verbatim (keeps you know, um)
-// on 8789 directly (same token) so Watch stays clean (Parakeet 8790) while
-// dictation is verbatim. See pbs-sync retranscribe 2026-09-01.
+// Daily dictation uses CrisperWhisper 2.0 medium verbatim (keeps "you know",
+// "um") on 8789 directly (same token).
 const CRISPER_URL = process.env.CRISPER_URL || "http://127.0.0.1:8789";
 const CRISPER_TOKEN = process.env.CRISPER_TOKEN || (() => {
   try { return require("fs").readFileSync("/home/james/crisper-whisper/service.env","utf8").match(/PARAKEET_TOKEN=(.*)/)[1].trim(); } catch { return process.env.PARAKEET_TOKEN || ""; }
@@ -60,9 +59,8 @@ function sha256File(filePath) {
   });
 }
 
-// Calls a Parakeet endpoint directly, authenticated with the shared bearer
-// token. A non-2xx body is FastAPI's {detail: "..."} (parakeet-ov/service.py
-// raises via HTTPException(status, message)), not comart's old {error: "..."}.
+// Calls an STT endpoint directly, authenticated with the shared bearer
+// token. A non-2xx body is the service's FastAPI {detail: "..."} shape.
 async function parakeetCall(url, init = {}) {
   let res;
   try {
@@ -83,11 +81,9 @@ async function parakeetCall(url, init = {}) {
   return data;
 }
 
-// --- transcript sanitising (coerce every field) — ported from comart's
-// internal/server/transcript.go sanitizeTranscript. Parakeet's raw output has
-// occasionally carried non-finite numbers or non-string text; comart was the
-// only thing cleaning that up, so this keeps doing it now that nothing else
-// sits in front of Parakeet.
+// --- transcript sanitising (coerce every field). The services' raw output
+// has occasionally carried non-finite numbers or non-string text, so every
+// transcript is cleaned on the way in.
 function toNum(v) {
   if (typeof v === "number") return Number.isFinite(v) ? v : 0;
   if (typeof v === "string") {
@@ -123,9 +119,8 @@ function sanitizeTranscript(raw) {
   return { lines, words };
 }
 
-// Same retry policy as app-listen.js's txRetryable: network blips, 5xx, and
-// busy/not-ready (409/429) are worth retrying; other 4xx means the request
-// itself is wrong.
+// Retry policy for polling: network blips, 5xx, and busy/not-ready (409/429)
+// are worth retrying; other 4xx means the request itself is wrong.
 function retryable(e) {
   return !e.status || e.status >= 500 || e.status === 409 || e.status === 429;
 }
@@ -139,15 +134,10 @@ async function readChunk(fd, start, len) {
 // Transcribes a file already on disk via Parakeet directly (clean).
 // For verbatim dictation, use transcribeVerbatim() which hits Crisper 8789 directly.
 // Returns {lines, words}. Calls onProgress(message) as it goes.
-async function transcribe(filePath, { onProgress = () => {}, sha256 } = {}) {
+async function transcribe(filePath, { onProgress = () => {} } = {}) {
   const size = statSync(filePath).size;
   if (size > TX_MAX) throw new Error("File is too large to transcribe (over 2 GB).");
   if (!PARAKEET_TOKEN) throw new Error("PARAKEET_TOKEN not configured for transcription.");
-
-  if (!sha256) {
-    onProgress("hashing file...");
-    sha256 = await sha256File(filePath);
-  }
 
   onProgress("starting upload...");
   const begin = await parakeetCall(`${PARAKEET_URL}/v1/uploads`, { method: "POST" });
@@ -215,21 +205,17 @@ async function transcribe(filePath, { onProgress = () => {}, sha256 } = {}) {
   return t;
 }
 
-// Verbatim variant for daily dictation — hits CrisperWhisper2.0 medium on
-// 8789 directly (same bearer token) instead of comart/Parakeet. Same chunked
-// protocol, same polling, but no comart cache. Used by pbs-sync for PBS
-// segments so you know is kept for scoring while Watch stays clean.
-async function transcribeVerbatim(filePath, { onProgress = () => {}, sha256 } = {}) {
+// Verbatim variant for daily dictation — CrisperWhisper 2.0 medium on 8789
+// directly (same bearer token) instead of Parakeet. Same polling, but a
+// single-shot multipart POST instead of the chunked protocol: PBS clips are
+// small (<100 MB) and this avoids chunk bookkeeping for them.
+async function transcribeVerbatim(filePath, { onProgress = () => {} } = {}) {
   const size = statSync(filePath).size;
   if (size > TX_MAX) throw new Error("File is too large to transcribe (over 2 GB).");
   if (!CRISPER_TOKEN) throw new Error("CRISPER_TOKEN/PARAKEET_TOKEN not configured for verbatim transcription.");
-  if (!sha256) {
-    onProgress("hashing file...");
-    sha256 = await sha256File(filePath);
-  }
   // Direct Crisper: single-shot POST /v1/jobs (multipart) is simpler than
-  // chunked for PBS clips (<100MB) and avoids comart's transcript cache.
-  // For larger files we could reuse chunked, but PBS segments are small.
+  // chunked for PBS clips (<100MB). For larger files we could reuse the
+  // chunked protocol above, but PBS segments are small.
   onProgress("uploading to Crisper (verbatim)...");
   const buf = await fs.readFile(filePath);
   const form = new FormData();

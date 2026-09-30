@@ -157,9 +157,6 @@
     });
   }
 
-  // The dictation loop (dLoopStart) is separate from the player module's own
-  // state, so nothing outside this file can clear it — no guard needed.
-
   // ---------------------------------------------------------------------------
   // Dictation — stats + session loading
   // ---------------------------------------------------------------------------
@@ -168,12 +165,9 @@
   // total / due / retired and sent them on every request; nothing rendered them,
   // so a drill built on daily repetition showed the learner no count, no trend,
   // and no sign when the pool ran dry.
-  let lastProgress = null;
-
   function renderDictStats(p) {
     if (!dictStatsEl) return;
     if (!p || !p.total) { dictStatsEl.hidden = true; dictStatsEl.textContent = ""; return; }
-    lastProgress = p;
 
     const done = Math.max(0, (p.total || 0) - (p.unseen != null ? p.unseen : p.remaining || 0));
     const bits = [`${done} / ${p.total} seen`];
@@ -304,14 +298,14 @@
   function showDictRef() {
     if (dictRefEl) dictRefEl.hidden = false;
     if (dictRefPanel) dictRefPanel.hidden = false;
-    // The reference lives inside .player, in the caption slot. On the
-    // narrow layout (app.html's max-width:760px rules) the player boots collapsed
-    // (body.player-collapsed, display:none) and only the floating broadcast
-    // button re-opens it — so a Reveal there would show nothing at all. Open
-    // the player the way that button does: its click runs app-player.js's
-    // closure-private setPlayerCollapsed(false), which also re-measures
-    // --player-h. On desktop the class is inert and the player is never
-    // display:none, so this branch is never taken there.
+    // The reference lives inside .player, in the slot above the controls. On
+    // the narrow layout (app.html's max-width:760px rules) the player boots
+    // collapsed (body.player-collapsed, display:none) and only the floating
+    // show-player button re-opens it — so a Reveal there would show nothing at
+    // all. Open the player the way that button does: its click runs
+    // app-player.js's closure-private setPlayerCollapsed(false), which also
+    // re-measures --player-h. On desktop the class is inert and the player is
+    // never display:none, so this branch is never taken there.
     if (playerEl && document.body.classList.contains("player-collapsed") &&
         getComputedStyle(playerEl).display === "none") {
       const fab = document.getElementById("ln-fab");
@@ -372,7 +366,6 @@
         wordCount: Number(data.wordCount) || 0,
         reference: String(data.reference || ""),
         wpm: Number(data.wpm) || 0,
-        difficulty: Number(data.difficulty) || 0,
         exhausted: !!data.exhausted,
         // Per-word ASR timings for this segment — the raw material for the A-B
         // loop below. [] from a backend that couldn't read the transcript.
@@ -614,9 +607,6 @@
     });
   }
 
-  // The player ticker (150 ms) also re-arms a backgrounded loop; give
-  // dictation the same safety via the same visibility hook (no extra work).
-
   // ---------------------------------------------------------------------------
   // Checker
   // ---------------------------------------------------------------------------
@@ -629,7 +619,6 @@
     // Score badge
     dictPctEl.textContent = `${score}%`;
     dictPctEl.className = "pct " + (score >= 85 ? "good" : score >= 60 ? "mid" : "bad");
-    const accPct = Math.round((1 - wer) * 100); // same as score but may be 0-100; show raw WER too
     const detail = `${C}/${n} correct · ${S} sub · ${D} del · ${I} ins · WER ${(wer * 100).toFixed(1)}%`;
     dictDetailEl.textContent = detail;
     dictScoreEl.hidden = false;
@@ -703,7 +692,6 @@
       }
       const data = await r.json();
       renderGrade(data);
-      // Also mark for persistence in header stats? Not yet completed — only on Next.
     } catch (e) {
       console.error("check failed", e);
       dictResultEl.hidden = false;
@@ -800,9 +788,7 @@
     }
     const phrase = parts.join(" ");
     if (!phrase) return;
-    const context = currentSession
-      ? currentSession.reference
-      : dictRefEl.textContent.replace(/^Reference:\s*/, "");
+    const context = (currentSession && currentSession.reference) || "";
     if (window.__dictationExplain) window.__dictationExplain(phrase, context);
   }
 

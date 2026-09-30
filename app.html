@@ -6,28 +6,13 @@
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#181818">
 <title>Daily Dictation</title>
-<script>
-  // Early macOS detection so the first paint already clears the traffic lights.
-  // titlebar.js also sets this class as a fallback once window.electronWindow is certain.
-  (function () {
-    try {
-      var p = window.electronWindow && window.electronWindow.platform;
-      if (p === "darwin") document.documentElement.classList.add("is-darwin");
-      else if (!p && typeof navigator !== "undefined" && /Mac/.test(navigator.platform || navigator.userAgent || "")) {
-        document.documentElement.classList.add("is-darwin");
-      }
-    } catch {}
-  })();
-</script>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23211f1c'/%3E%3Cg fill='%23e7e5e0'%3E%3Crect x='10' y='10' width='19' height='19' rx='4.5'/%3E%3Crect x='35' y='10' width='19' height='19' rx='4.5'/%3E%3Crect x='10' y='35' width='19' height='19' rx='4.5'/%3E%3C/g%3E%3Crect x='35' y='35' width='19' height='19' rx='4.5' fill='%23ff6719'/%3E%3C/svg%3E">
-<!-- The floating microphone button — see mic.css/mic.js. Its own stylesheet
-     (not folded into the block below) so the diff against the removal this
-     app's clone once made stays a clean add, not an edit. -->
+<!-- The floating microphone button — see mic.css/mic.js. -->
 <link rel="stylesheet" href="mic.css">
 <style>
   /* IPA glyphs (ə, ˈ, ˌ, ē …) render most reliably in Open Sans — used for the
-     Merriam-Webster pronunciation badges in the explanation panel. Served
-     from /fonts. */
+     Merriam-Webster pronunciation badges in the explanation panel. The files
+     sit beside app.html. */
   @font-face {
     font-family: "Open Sans";
     font-style: normal;
@@ -50,7 +35,7 @@
 
   /* Lora — the serif Substack reads in. One variable file spans the weights we
      use (400 body → 700 titles); a matching italic carries *emphasis* and
-     blockquotes. Self-hosted from /fonts so it works under font-src 'self'. */
+     blockquotes. Self-hosted beside app.html. */
   @font-face {
     font-family: "Lora";
     font-style: normal;
@@ -74,27 +59,23 @@
     /* Substack-inspired dark theme. A warm near-black page; flat surfaces
        separated by hairlines rather than heavy drop shadows; a calm off-white
        reading colour; and Substack's signature orange as the single action
-       accent. Reading surfaces (the transcript, explanations, titles)
+       accent. Reading surfaces (the reference, explanations, titles)
        are set in a serif — Substack's defining move — while UI chrome
        (buttons, labels, meta) stays in a clean neutral sans. */
     --bg: #181818;
     --surface: #202020;
-    --surface-2: #292826;
     --text: #e7e5e0;
     --text-2: #9b9892;
     --accent: #ff6719;
     --accent-hover: #ff8142;
     --rec: #ff5a4d;
     --hairline: rgba(255, 255, 255, 0.08);
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
-    --shadow-hover: 0 8px 26px rgba(0, 0, 0, 0.55);
 
     /* Explanation panel + dictation */
     --border: rgba(255, 255, 255, 0.12);
     --text-soft: #c5c2bb;
     --text-dim: #78756f;
     --mark: rgba(255, 203, 92, 0.26);
-    --mark-hover: rgba(255, 203, 92, 0.42);
     --word-hover: rgba(255, 255, 255, 0.07);
     /* A cool teal for pronunciation badges — a deliberate counterpoint to the
        warm orange action accent, so the two reads never get confused. */
@@ -141,28 +122,29 @@
      DICTATION — daily dictation sessions from PBS NewsHour (audio-only,
      1–2 sentences per session, looped), with a notepad, a WER-based
      checker, and a word-by-word explanation panel. The main region (the
-     "band") holds the dictation view and the explanation panel; a
-     reference caption and a full-width player bar sit at the page bottom.
+     "band") holds the dictation view and the explanation panel; the session
+     reference line and a full-width player bar sit at the page bottom.
      ====================================================================== */
 
   /* Explanation band — the page's main region, filling the whole area above the
-     player. Holds the single explanation panel (R1), anchored to the bottom
-     (nearest the caption) at a draggable height; the space above it is empty. */
+     player. Holds the single explanation panel, anchored to the bottom
+     (nearest the reference line) at a draggable height; the space above it is
+     empty. */
   .explain-band {
     flex: 1 1 auto;                /* the main region: fills the area above the player */
     min-height: 0;
-    overflow: visible;             /* don't clip the floating record button / its shadow */
+    overflow: visible;             /* don't clip the floating mic button / its shadow */
     display: flex;
-    flex-direction: column;        /* panels reordered via `order` (R1 bottom) */
-    justify-content: flex-end;     /* the panel sits at the bottom, R1 nearest caption */
+    flex-direction: column;
+    justify-content: flex-end;     /* the panel sits at the bottom, nearest the reference line */
     position: relative;
     background: color-mix(in srgb, var(--bg) 55%, var(--surface));
   }
   .explain-band[hidden] { display: none; }
 
-  /* The single explanation panel (R1). Anchored to the bottom of the band
-     (nearest the caption) at a draggable height (--panel-h); the space above is
-     empty. */
+  /* The single explanation panel. Anchored to the bottom of the band
+     (nearest the reference line) at a draggable height (--panel-h); the space
+     above is empty. */
   .explain-panel {
     flex: 0 0 var(--panel-h, 60vh);
     min-height: 0;
@@ -208,7 +190,7 @@
     width: 100%;
     overflow-y: auto;
     /* Keep a scroll gesture that started in the panel inside the panel: don't let
-       it chain to the page (the article behind it) when it hits the top/bottom. */
+       it chain to the page behind it when it hits the top/bottom. */
     overscroll-behavior: contain;
     padding: 20px 16px;
     font-family: var(--serif);
@@ -372,9 +354,9 @@
   }
 
   /* ---------- bottom player block (full width) ---------- */
-  /* Holds the reference caption (.dictation-ref-panel), an optional low-credit
-     warning, and the controls row (play · seek · loop). It is the bottom flex
-     child of the body shell. */
+  /* Holds the session reference line (.dictation-ref-panel), an optional
+     low-credit warning, and the controls row (play · seek · loop). It is the
+     bottom flex child of the body shell. */
   .player {
     position: relative;
     flex: 0 0 auto;
@@ -387,8 +369,7 @@
   .player[hidden] { display: none; }
 
   /* Holds only the low-credit warning (when present), on its own line above the
-     controls. Collapses to zero height when the warning is hidden — the file's
-     name lives in the browser tab title. */
+     controls. Collapses to zero height when the warning is hidden. */
   .ab-titlebar { display: flex; align-items: baseline; gap: 12px; padding: 0 2px; }
   .ab-warn { font-size: 11.5px; font-weight: 500; color: var(--rec); white-space: nowrap; margin-bottom: 5px; }
   .ab-warn[hidden] { display: none; }
@@ -398,7 +379,7 @@
      triggers mobile double-tap-to-zoom. */
   .audiobar { position: relative; display: flex; align-items: center; gap: 13px; touch-action: manipulation; }
   /* No circle, no surface: the button IS just its icon, matching the floating
-     record / import buttons. The 34px box stays as an invisible touch target. */
+     mic button. The 34px box stays as an invisible touch target. */
   .ab-play, .ab-skip, .ab-collapse, .ab-loop {
     flex: none;
     width: 34px; height: 34px;
@@ -407,7 +388,7 @@
     background: none;
     cursor: pointer;
     /* Tapping the jump buttons fast must not trigger the browser's double-tap
-       zoom (mobile). Same touch hygiene the record button uses. */
+       zoom (mobile). Same touch hygiene the mic button uses. */
     -webkit-tap-highlight-color: transparent;
     touch-action: manipulation;
     -webkit-user-select: none;
@@ -449,9 +430,8 @@
   .ab-skip svg { width: 20px; height: 20px; display: block; }
   /* Loop the dictation segment. Dim like the other utility icons when off;
      switching it on turns it the accent orange the play button already wears,
-     and that colour IS the "it is looping" signal — it replaces the filled
-     pill this used to be when it lived in the notepad's button row. Disabled
-     until a session loads. */
+     and that colour IS the "it is looping" signal. Disabled until a session
+     loads. */
   .ab-loop { display: none; color: var(--text-soft); }
   body.dictation-on .ab-loop { display: flex; }
   .ab-loop:hover { color: var(--text); }
@@ -462,7 +442,7 @@
   .ab-loop:disabled { opacity: 0.4; cursor: default; }
   .ab-loop svg { width: 20px; height: 20px; display: block; }
   /* Collapse the player (mobile only). A chevron-down that sits at the far right
-     of the controls row and hides the whole player; the floating broadcast
+     of the controls row and hides the whole player; the floating show-player
      button (.ln-fab) then brings it back. Hidden on desktop (revealed by the
      mobile media query, which also pushes it to the row's right edge). */
   .ab-collapse { display: none; color: var(--text-soft); }
@@ -471,14 +451,14 @@
   .ab-collapse svg { width: 20px; height: 20px; display: block; }
 
   /* Floating "show player" button (mobile only). When the player is collapsed,
-     this broadcast glyph floats at the bottom-right corner — same bare-glyph
-     style as the record button (.ex-btn): no surface, just the icon. Hidden by
-     default; the mobile media query reveals it only while collapsed. */
+     this glyph floats at the bottom-right corner — same bare-glyph style as
+     the mic button: no surface, just the icon. Hidden by default; the mobile
+     media query reveals it only while collapsed. */
   .ln-fab {
     position: fixed;
     bottom: calc(16px + env(safe-area-inset-bottom));
     right: 14px;
-    z-index: 55;                 /* above the band/panel; below the record button (60) */
+    z-index: 55;                 /* above the band/panel; below the mic button (60) */
     display: none;
     align-items: center;
     justify-content: center;
@@ -549,16 +529,16 @@
     /* FLOAT the panel, like desktop. On desktop the page never scrolls and the
        panel is a fixed-height box pinned to the bottom while the text scrolls in
        its own box above. On mobile the whole page scrolls, so without help the
-       panel would scroll away with the text and a long article reading above an
+       panel would scroll away with the text and a tall notepad above an
        explanation would hide it. position:sticky pins the panel just above the
-       fixed player (bottom = its reserved height) so it stays on screen while the
-       original text scrolls underneath — and, because it stays in normal flow, it
-       keeps reserving its own height at the end of the band (so the last lines of
-       text always clear it) and simply isn't there when no explanation exists yet.
-       An opaque background (matching the band) is required since text scrolls
-       beneath it; z-index sits above the text but below the fixed player (20) and
-       the record button (60). The top-edge resize handle rides along, so the panel
-       is still draggable while floating. */
+       fixed player (bottom = its reserved height) so it stays on screen while
+       the notepad scrolls underneath — and, because it stays in normal flow, it
+       keeps reserving its own height at the end of the band (so the last lines
+       of text always clear it) and simply isn't there when no explanation
+       exists yet. An opaque background (matching the band) is required since
+       text scrolls beneath it; z-index sits above the text but below the fixed
+       player (20) and the mic button (60). The top-edge resize handle rides
+       along, so the panel is still draggable while floating. */
     .explain-panel {
       position: sticky;
       bottom: var(--player-h, 130px);
@@ -589,10 +569,8 @@
        scrub. */
     .ab-skip { display: flex; }
     /* Spread the controls evenly across the row: space-between puts the first
-       transport button at the left endpoint and hide at the right endpoint,
-       with back · play · forward (and loop) evenly distributed between them. The
-       seek row below is flex-basis:100% so it sits alone on its own line,
-       unaffected. */
+       transport button at the left endpoint and hide at the right endpoint. The
+       seek row below is flex-basis:100% so it sits alone on its own line. */
     .audiobar { flex-wrap: wrap; row-gap: 12px; justify-content: space-between; }
     .ab-progress { flex-basis: 100%; }
 
@@ -611,9 +589,9 @@
 
     /* ---- Collapsible player (mobile only) ----
        The whole player starts collapsed (body.player-collapsed in the markup):
-       hide it and float the broadcast button (.ln-fab) bottom-right to bring it
-       back. Tapping the chevron (.ab-collapse) inside the controls re-adds the
-       class. On desktop none of this applies — the class is a no-op there.
+       hide it and float the show-player button (.ln-fab) bottom-right to bring
+       it back. Tapping the chevron (.ab-collapse) inside the controls re-adds
+       the class. On desktop none of this applies — the class is a no-op there.
        (No margin needed — .audiobar's space-between lands this button at the
        row's right endpoint.) */
     .ab-collapse { display: flex; }
@@ -622,11 +600,9 @@
   }
 
   /* ======================================================================
-     Custom title bar — all platforms (see titlebar.js). Frameless window
-     with the same right-aligned min/max/close as Linux — previously
-     Linux/Windows only, now macOS too (no more hiddenInset traffic lights).
-     Kept visually as quiet as possible: no separate surface colour, just a
-     hairline to close off the content below.
+     Custom title bar — frameless window with right-aligned min/max/close
+     controls (see titlebar.js). Kept visually as quiet as possible: no
+     separate surface colour, just a hairline to close off the content below.
      ====================================================================== */
   .electron-titlebar {
     flex: 0 0 auto;
@@ -830,11 +806,6 @@
   /* [hidden] has to beat display, or the empty "—" pill shows whenever there is
      no grade to report. Same trap as .dictation-stats and .dictation-rate. */
   .dictation-score[hidden] { display: none !important; }
-  .dictation-btn.active {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: #fff;
-  }
   .dictation-score {
     display: inline-flex;
     align-items: center;
@@ -879,16 +850,6 @@
   .dictation-result .word.sub { background: rgba(255,90,77,0.18); color: var(--text); text-decoration: line-through; text-decoration-color: rgba(255,90,77,0.8); }
   .dictation-result .word.ins { background: rgba(255,90,77,0.12); color: var(--err); font-style: italic; }
   .dictation-result .word.missing { background: rgba(232,179,74,0.20); color: var(--text); border: 1px dashed rgba(232,179,74,0.5); }
-  .dictation-ref {
-    padding: 12px 14px;
-    border-radius: 12px;
-    background: color-mix(in srgb, var(--surface) 88%, var(--bg));
-    border: 1px solid var(--border);
-    font-family: var(--serif);
-    font-size: 14.5px;
-    line-height: 1.65;
-    color: var(--text-soft);
-  }
   .dictation-ref[hidden] { display: none; }
   .dictation-ref strong { color: var(--text); }
   .dictation-ref .dictation-ref-word {
@@ -929,11 +890,10 @@
     border-radius: 4px;
   }
   /* Reference panel — the session sentence, living INSIDE .player, first thing
-     above the controls. 40px floor (one caption line), 26vh cap, -14px side
-     margin against .player's 16px gutter with the 14px side padding put back,
-     2px/9px vertical padding, left-aligned; serif 17px/1.55, weight 600,
-     --text. A dictation session is only its own sentence, so there is no
-     context line. */
+     above the controls. 40px floor (one line), 26vh cap, -14px side margin
+     against .player's 16px gutter with the 14px side padding put back, 2px/9px
+     vertical padding, left-aligned; serif 17px/1.55, weight 600, --text. A
+     dictation session is only its own sentence, so there is no context line. */
   .dictation-ref-panel {
     display: block;
   }
@@ -963,20 +923,6 @@
     background-clip: padding-box;
     border: 3px solid transparent;
     border-radius: 999px;
-  }
-  /* Inside the caption slot the reference drops its card chrome (the base
-     .dictation-ref rule above still carries the padding/border/background it
-     had as a notepad card) and inherits .dictation-ref-scroll's caption type. */
-  .dictation-ref-panel .dictation-ref {
-    padding: 0;
-    border: 0;
-    border-radius: 0;
-    background: none;
-    font-family: inherit;
-    font-size: inherit;
-    line-height: inherit;
-    font-weight: inherit;
-    color: inherit;
   }
   .dictation-ref-panel .dictation-ref p {
     margin: 0 0 10px;
@@ -1014,9 +960,8 @@
 </style>
 </head>
 <body class="player-collapsed">
-  <!-- Custom title bar — all platforms (frameless). Shown and wired up by
-       titlebar.js — previously Linux/Windows only, now macOS too (no more
-       native traffic lights). -->
+  <!-- Custom title bar for the frameless window — shown and wired up by
+       titlebar.js. -->
   <div class="electron-titlebar" id="electron-titlebar" hidden>
     <div class="electron-titlebar-controls">
       <button class="electron-titlebar-btn" id="electron-titlebar-min" type="button" aria-label="Minimize">
@@ -1033,8 +978,8 @@
   </div>
 
   <!-- Explanation band — the page's main region. Fills the whole area above the
-       player and holds the single explanation panel (R1, injected at runtime,
-       see makePanel), anchored to the bottom at a draggable height. -->
+       player and holds the single explanation panel (injected at runtime, see
+       makePanel), anchored to the bottom at a draggable height. -->
   <div class="explain-band" id="ln-explain-band">
     <!-- Dictation — audio-only notepad (1–2 sentences per session).
          The whole PBS NewsHour segment is streamed but the player loops only
@@ -1074,9 +1019,9 @@
 
   </div>
 
-  <!-- Full-width player block, pinned to the page bottom: the reference
-       caption on top, then the controls row (play · seek · loop). A low-credit
-       warning, when present, shows just above the controls. -->
+  <!-- Full-width player block, pinned to the page bottom: the session
+       reference line on top, then the controls row (play · seek · loop). A
+       low-credit warning, when present, shows just above the controls. -->
   <div class="player" id="ln-player" hidden>
     <!-- Dictation Reference — the session sentence, shown after
          Check → Reveal; see showDictRef in app-dictation.js. Left-click a word
@@ -1113,7 +1058,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
       </button>
       <!-- Hide the whole player (mobile only). Sits with the transport controls;
-           tapping it collapses the player down to the floating broadcast button
+           tapping it collapses the player down to the floating show-player button
            (#ln-fab), which brings it back. Hidden on desktop (CSS). -->
       <button class="ab-collapse" id="ln-collapse" type="button" aria-label="Hide player" title="Hide player" aria-controls="ln-player" aria-expanded="false">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
@@ -1130,9 +1075,9 @@
   </div>
 
   <!-- Floating "show player" button (mobile only). When the player is collapsed
-       (body.player-collapsed) this broadcast icon floats at the bottom-right —
-       styled like the record button — and tapping it brings the whole player
-       (caption · controls · seek) back. Hidden on desktop and whenever the
+       (body.player-collapsed) this icon floats at the bottom-right — styled
+       like the mic button — and tapping it brings the whole player
+       (reference · controls · seek) back. Hidden on desktop and whenever the
        player is open (CSS). -->
   <button class="ln-fab" id="ln-fab" type="button" aria-label="Show player" title="Show player" aria-controls="ln-player" aria-expanded="false">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

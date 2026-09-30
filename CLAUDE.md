@@ -109,11 +109,12 @@ worktree marker that must stay untracked *and* must not be added to
 
 ### What is intentionally not in git
 
-`.gitignore` excludes `node_modules/` (~565 MB, reinstalled via `npm install`)
-and `dist/` (electron-builder output). The two secret files (`.env`, and
-anything matching it) must never be committed. Everything else — including
-`build/icon.png` and `build/icons/`, which `package.json`'s `build.mac`/
-`build.linux` config references directly — is tracked.
+`.gitignore` excludes `node_modules/` (~565 MB, reinstalled via `npm install`),
+`dist/` (electron-builder output), and `library/` (machine-local user data:
+media, `db.json`, `dictation.json`). `.env` must never be committed. Everything
+else — including `build/icon.png` and `build/icons/`, which `package.json`'s
+`build.mac`/`build.linux` config references directly — is tracked. The
+cron-written `pbs-sync.log` is untracked by omission, not by rule.
 
 ### About this project
 
@@ -137,7 +138,8 @@ loopback; library lives in `<repo>/library` in dev, `<userData>/library`
 packaged — see `backend/paths.js`). `backend/dictation.js` holds the session-partition algorithm, the scheduler,
 and the WER grader. `backend/pbs-sync.js` (cron, daily) pulls new PBS
 segments with verbatim Crisper transcription; the Parakeet "clean" path in
-`backend/transcribe.js` is unused since the film library went away.
+`backend/transcribe.js` is the default for manual `backend/import.js` CLI
+imports (pbs-sync always passes `verbatim: true`).
 `main.js` is the Electron shell. Avoid changing `app-player.js`'s explanation
 engine unless the task requires it.
 
