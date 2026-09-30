@@ -156,10 +156,6 @@
     flex-direction: column;        /* panels reordered via `order` (R1 bottom) */
     justify-content: flex-end;     /* the panel sits at the bottom, R1 nearest caption */
     position: relative;
-    /* Clearance for the record button, which is fixed at the top-right and so sits
-       outside the flow: without this the band's content renders under the mic
-       glyph — and, at narrow widths, becomes unclickable. */
-    padding-top: 52px;
     background: color-mix(in srgb, var(--bg) 55%, var(--surface));
   }
   .explain-band[hidden] { display: none; }
@@ -601,7 +597,7 @@
     .ab-progress { flex-basis: 100%; }
 
     /* The three transport buttons (back · play/pause · forward) share one size,
-       bigger than the side buttons (add · loop · hide, which stay 34px / 20px). Bare
+       bigger than the side buttons (loop · hide, which stay 34px / 20px). Bare
        glyphs, so the icon size IS the visible size — and the play glyph now fills
        its box like the jump icons, so equal px reads as equal visual size. Even
        spacing across the row is handled by .audiobar's space-between above. */
@@ -610,12 +606,8 @@
     /* Un-dimmed (NOT bold): each button keeps its own colour, just at full
        strength — back/forward go from the dimmed --text-soft to --text; play
        keeps its accent orange. So the trio reads brighter than the still-dim side
-       buttons (add · loop · hide). */
+       buttons (loop · hide). */
     #ln-back, #ln-fwd { color: var(--text); }
-
-    /* The record button is pinned to the viewport's top-right (see the base .ex
-       rule); on mobile, nudge it clear of the status-bar / notch safe area. */
-    .ex { top: calc(16px + env(safe-area-inset-top)); right: 14px; }
 
     /* ---- Collapsible player (mobile only) ----
        The whole player starts collapsed (body.player-collapsed in the markup):
