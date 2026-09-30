@@ -122,8 +122,10 @@ repurposed to browse and play a personal media library (movies, audio,
 podcasts) served by this app's own local backend rather than comart.
 `app-listen.js` is the cloned page, adapted for the library; `app-base.js` is
 the one file that resolves the API base URL (see its own header comment) —
-originally comart's, now this app's own backend, tailscale-served, with the
-same synchronous-`localStorage`-read shape comart's version used (adapted
+originally comart's, now this app's embedded backend (`main.js` starts
+`backend/server.js` in-process on loopback; library lives in `<repo>/library`
+in dev, `<userData>/library` packaged — see `backend/paths.js`), with the
+same synchronous shape comart's version used (adapted
 from `chrome.storage`, since this page has no origin exemption comart's
 extension gets). `main.js` is the Electron shell. Avoid changing
 `app-listen.js` unless the task requires it — keep adaptations isolated to

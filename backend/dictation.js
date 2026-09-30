@@ -54,6 +54,11 @@
 const fs = require("fs");
 const path = require("path");
 const db = require("./db");
+const paths = require("./paths");
+
+function dictationPath() {
+  return paths.getDictationPath();
+}
 
 // ---------------------------------------------------------------------------
 // Tuning — every threshold in the pipeline, in one place.
@@ -157,8 +162,9 @@ const ALGORITHM_VERSION = 2;
 // same entry, and rekeys the item when it resolves that way.
 // ---------------------------------------------------------------------------
 
-const DICTATION_PATH = path.join(__dirname, "..", "library", "dictation.json");
-
+// Dictation state path — resolved per call (not a captured constant) so a
+// setLibraryDir() call from the packaged app takes effect without
+// re-requiring this module.
 function emptyState() {
   return { algorithmVersion: ALGORITHM_VERSION, items: {}, updatedAt: 0 };
 }
@@ -230,7 +236,7 @@ function migrateV1(raw) {
 function loadState() {
   let raw;
   try {
-    raw = JSON.parse(fs.readFileSync(DICTATION_PATH, "utf8"));
+    raw = JSON.parse(fs.readFileSync(dictationPath(), "utf8"));
   } catch {
     return emptyState();
   }
@@ -246,6 +252,7 @@ function loadState() {
 }
 
 function saveState(state) {
+  const DICTATION_PATH = dictationPath();
   const dir = path.dirname(DICTATION_PATH);
   try { fs.mkdirSync(dir, { recursive: true }); } catch {}
   state.algorithmVersion = ALGORITHM_VERSION;
@@ -1412,7 +1419,7 @@ function gradeDictation(reference, hypothesis) {
 }
 
 module.exports = {
-  DICTATION_PATH,
+  get DICTATION_PATH() { return dictationPath(); },
   ALGORITHM_VERSION,
   TUNING,
   // state

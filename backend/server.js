@@ -2,18 +2,19 @@
 
 // The media-library backend. Serves the entry list, streams media files
 // (range-request capable, for seeking), serves pre-computed transcripts, and
-// persists per-entry playback progress. Runs standalone — not spawned by
-// Electron's main.js — since the Electron client (this same repo) may run on
-// any device on the tailnet while the backend and its library stay on this
-// machine (nuc-15-pro). Reached over the network via app-base.js's resolved
-// URL, same as the app used to reach comart directly.
+// persists per-entry playback progress. Embedded in the Electron app —
+// main.js starts it in-process via start() before the window loads, so the
+// app is a single local-only program with no separate backend process.
+// Reached at the loopback URL app-base.js resolves, same as the app used to
+// reach comart directly.
 
 const fs = require("fs");
 const path = require("path");
 const express = require("express");
 const db = require("./db");
+const paths = require("./paths");
 
-const PORT = process.env.PORT || 8768;
+const DEFAULT_PORT = Number(process.env.PORT) || 8768;
 // This machine already is nuc-15-pro — comart runs locally.
 const COMART_BASE = "http://127.0.0.1:8770";
 const app = express();
@@ -294,6 +295,45 @@ app.post("/api/library/:id/progress", (req, res) => {
   res.sendStatus(204);
 });
 
-app.listen(PORT, "127.0.0.1", () => {
-  console.log(`av-materials backend listening on http://127.0.0.1:${PORT}`);
-});
+// In-process lifecycle for the Electron shell (main.js). Idempotent:
+// a second start() with the same port is a no-op returning the live server.
+// Rejects with EADDRINUSE if a foreign process holds the port (e.g. a stale
+// standalone `node backend/server.js`), so the caller can report it instead
+// of silently serving two backends.
+let server = null;
+let livePort = null;
+
+function start({ port = DEFAULT_PORT, libraryDir = null } = {}) {
+  if (libraryDir) paths.setLibraryDir(libraryDir);
+  if (server && livePort === port) return Promise.resolve(server);
+  return new Promise((resolve, reject) => {
+    const s = app.listen(port, "127.0.0.1", () => {
+      server = s;
+      livePort = port;
+      console.log(`av-materials backend listening on http://127.0.0.1:${port}`);
+      resolve(s);
+    });
+    s.on("error", reject);
+  });
+}
+
+function stop() {
+  return new Promise((resolve) => {
+    if (!server) return resolve();
+    const s = server;
+    server = null;
+    livePort = null;
+    s.close(() => resolve());
+  });
+}
+
+// Standalone CLI preserved for debugging: `node backend/server.js` /
+// `npm run backend`. The Electron app path is start() from main.js.
+if (require.main === module) {
+  start().catch((err) => {
+    console.error(`av-materials backend failed to listen: ${err.message}`);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { app, start, stop, DEFAULT_PORT };

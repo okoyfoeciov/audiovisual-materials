@@ -5,19 +5,16 @@
 // enough that a JSON file is genuinely adequate.
 
 const fs = require("fs");
-const path = require("path");
-
-const LIBRARY_DIR = path.join(__dirname, "..", "library");
-const DB_PATH = path.join(LIBRARY_DIR, "db.json");
+const paths = require("./paths");
 
 function ensureLibraryDir() {
-  fs.mkdirSync(LIBRARY_DIR, { recursive: true });
+  fs.mkdirSync(paths.getLibraryDir(), { recursive: true });
 }
 
 function load() {
   ensureLibraryDir();
   try {
-    return JSON.parse(fs.readFileSync(DB_PATH, "utf8"));
+    return JSON.parse(fs.readFileSync(paths.getDbPath(), "utf8"));
   } catch {
     return { entries: [] };
   }
@@ -25,9 +22,10 @@ function load() {
 
 function save(data) {
   ensureLibraryDir();
-  const tmp = DB_PATH + ".tmp";
+  const dbPath = paths.getDbPath();
+  const tmp = dbPath + ".tmp";
   fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
-  fs.renameSync(tmp, DB_PATH);
+  fs.renameSync(tmp, dbPath);
 }
 
 function listEntries() {
@@ -86,8 +84,12 @@ function deleteEntry(id) {
 }
 
 module.exports = {
-  LIBRARY_DIR,
-  DB_PATH,
+  // Dynamic getters so a setLibraryDir() call (packaged app pointing at
+  // <userData>/library) takes effect even though db.js was already required.
+  // import.js reads db.LIBRARY_DIR at import time per call, so this stays correct.
+  get LIBRARY_DIR() { return paths.getLibraryDir(); },
+  get DB_PATH() { return paths.getDbPath(); },
+  setLibraryDir: paths.setLibraryDir,
   listEntries,
   getEntry,
   listChildren,

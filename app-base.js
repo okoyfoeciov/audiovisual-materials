@@ -1,8 +1,7 @@
 // app-base.js — the ONE file here that is not [A]'s. Resolves the base URL of
-// this app's own local media-library backend (a Node/Express server, exposed
-// on the tailnet via `tailscale serve`), the same shape as comart's original
-// app-base.js used for its Go server: one DEFAULT_BASE, one localStorage
-// override, one function.
+// this app's own media-library backend: the Express server main.js starts
+// embedded in this same app process on loopback, the same shape as comart's
+// original app-base.js used for its Go server: one DEFAULT_BASE, one function.
 //
 // This page has no server of its own, so every one of app-listen.js's
 // apiBase() call sites gets that prefixed on: the library endpoints
@@ -13,25 +12,19 @@
 //
 // localStorage is synchronous, so BASE resolves at call time with no async
 // race to guard against — still a function, not a captured constant, just for
-// parity of shape with comart's original. Nothing writes the "media-base" key
-// today; set it from this page's devtools console to point at a non-default
-// backend (e.g. http://127.0.0.1:8768 when developing directly on the NUC).
+// parity of shape with comart's original.
 //
 // UNVERIFIED: comart's app-base.js exists because chrome-extension:// pages are
 // exempt from Chrome's Private Network Access checks and a normal origin is
 // not — see comart's NOTES.md §1. Whether the shell wrapping this page (Electron
-// or otherwise) enforces that same restriction against the tailnet host has not
+// or otherwise) enforces that same restriction against a loopback host has not
 // been tested yet. If apiBase() calls start failing with a network error
 // instead of an HTTP error, this is the first thing to check.
 
 (() => {
   "use strict";
 
-  const DEFAULT_BASE = "https://nuc-15-pro.taile4fb34.ts.net/av-materials";
+  const DEFAULT_BASE = "http://127.0.0.1:8768";
 
-  window.apiBase = () => {
-    let override = null;
-    try { override = localStorage.getItem("media-base"); } catch {}
-    return override ? override.replace(/\/$/, "") : DEFAULT_BASE;
-  };
+  window.apiBase = () => DEFAULT_BASE;
 })();

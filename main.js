@@ -1,5 +1,6 @@
-const { app, BrowserWindow, nativeImage, ipcMain, session, systemPreferences } = require("electron");
+const { app, BrowserWindow, dialog, nativeImage, ipcMain, session, systemPreferences } = require("electron");
 const path = require("node:path");
+const backend = require("./backend/server");
 
 // The transcript card (mic.js) plays its clip back the instant it opens, with
 // no click in between — the fetch() that transcribes it breaks the click's
@@ -88,7 +89,26 @@ ipcMain.handle("window:is-maximized", (event) => {
   return BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false;
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  // Embedded media-library backend (single app, local-only). The asar bundle
+  // is read-only and ships no library, so packaged builds keep their data in
+  // <userData>/library; dev runs (`electron .` from source) keep using
+  // <repo>/library, which is also what the import/pbs-sync CLIs default to.
+  const libraryDir = app.isPackaged
+    ? path.join(app.getPath("userData"), "library")
+    : path.join(__dirname, "library");
+  try {
+    await backend.start({ port: backend.DEFAULT_PORT, libraryDir });
+  } catch (err) {
+    const code = err && err.code;
+    const detail = code === "EADDRINUSE"
+      ? `Port ${backend.DEFAULT_PORT} is already in use — another copy of this app (or the retired standalone "node backend/server.js" / av-materials.service) is still running. Stop it and relaunch.`
+      : String((err && err.message) || err);
+    console.error(`embedded backend failed to start: ${detail}`);
+    dialog.showErrorBox("Audiovisual Materials — backend failed to start", detail);
+    app.quit();
+    return;
+  }
   // BrowserWindow's `icon` option only reaches the Windows/Linux taskbar — on
   // macOS the dock icon is read from the packaged .app's Info.plist, which
   // doesn't exist yet in an unpackaged `electron .` dev run. Without this, dev
@@ -120,4 +140,9 @@ app.whenReady().then(() => {
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
+});
+
+app.on("before-quit", () => {
+  // Fire-and-forget: releases the loopback port; process exit doesn't wait.
+  backend.stop().catch(() => {});
 });
