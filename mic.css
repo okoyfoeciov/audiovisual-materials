@@ -54,7 +54,7 @@
 .mic[data-state="recording"] .mic-btn,
 .mic[data-msg] .mic-btn {
   padding: 6px 16px;
-  border-radius: 999px;
+  border-radius: 8px;
   background: var(--surface);
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
   filter: none;
@@ -134,7 +134,7 @@
   overflow: hidden;
   background: var(--surface);
   border: 1px solid var(--hairline);
-  border-radius: 14px;
+  border-radius: 10px;
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
   opacity: 0;
   transform: translateY(10px) scale(0.98);

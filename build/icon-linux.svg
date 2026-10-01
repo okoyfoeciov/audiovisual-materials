@@ -1,24 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <!-- Same design as ../icon.svg, but with the squircle enlarged to fill
-       most of the canvas instead of leaving macOS's ~8.5%-per-side "safe
-       zone" margin. macOS's Dock applies its own icon treatment that
-       expects that margin; Linux docks/taskbars don't, so the macOS-sized
-       icon reads as too small there. Bars are the same design scaled
-       proportionally to the enlarged squircle, not redrawn. -->
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#292826"/>
-      <stop offset="1" stop-color="#181818"/>
-    </linearGradient>
-    <linearGradient id="bar" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#ff8142"/>
-      <stop offset="1" stop-color="#ff6719"/>
-    </linearGradient>
-  </defs>
-  <rect x="2" y="2" width="60" height="60" rx="13.20" fill="url(#bg)"/>
-  <rect x="14.28" y="24.41" width="5.06" height="15.19" rx="2.53" fill="url(#bar)"/>
-  <rect x="21.88" y="20.18" width="5.06" height="23.63" rx="2.53" fill="url(#bar)"/>
-  <rect x="29.47" y="15.97" width="5.06" height="32.07" rx="2.53" fill="url(#bar)"/>
-  <rect x="37.06" y="20.18" width="5.06" height="23.63" rx="2.53" fill="url(#bar)"/>
-  <rect x="44.66" y="24.41" width="5.06" height="15.19" rx="2.53" fill="url(#bar)"/>
+  <!-- Stone Wave — bone bars, one stone peak, flat charcoal tile. Linux variant: squircle fills the canvas; docks/taskbars here apply no treatment. -->
+  <rect x="2" y="2" width="60" height="60" rx="13.2" fill="#131313"/>
+  <rect x="12.39" y="25.04" width="4.93" height="13.93" rx="2.46" fill="#A3A099"/>
+  <rect x="20.96" y="20.75" width="4.93" height="22.50" rx="2.46" fill="#E8E6E1"/>
+  <rect x="29.54" y="16.46" width="4.93" height="31.07" rx="2.46" fill="#C9C2B4"/>
+  <rect x="38.11" y="20.75" width="4.93" height="22.50" rx="2.46" fill="#E8E6E1"/>
+  <rect x="46.68" y="25.04" width="4.93" height="13.93" rx="2.46" fill="#A3A099"/>
 </svg>

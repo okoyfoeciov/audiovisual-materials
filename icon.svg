@@ -1,18 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#292826"/>
-      <stop offset="1" stop-color="#181818"/>
-    </linearGradient>
-    <linearGradient id="bar" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#ff8142"/>
-      <stop offset="1" stop-color="#ff6719"/>
-    </linearGradient>
-  </defs>
-  <rect x="5.44" y="5.44" width="53.12" height="53.12" rx="11.69" fill="url(#bg)"/>
-  <rect x="16.31" y="25.28" width="4.48" height="13.45" rx="2.24" fill="url(#bar)"/>
-  <rect x="23.04" y="21.54" width="4.48" height="20.92" rx="2.24" fill="url(#bar)"/>
-  <rect x="29.76" y="17.81" width="4.48" height="28.39" rx="2.24" fill="url(#bar)"/>
-  <rect x="36.48" y="21.54" width="4.48" height="20.92" rx="2.24" fill="url(#bar)"/>
-  <rect x="43.20" y="25.28" width="4.48" height="13.45" rx="2.24" fill="url(#bar)"/>
+  <!-- Stone Wave — bone bars, one stone peak, flat charcoal tile. macOS variant
+       keeps the ~8.5%-per-side safe-zone margin the Dock expects. -->
+  <rect x="5.44" y="5.44" width="53.12" height="53.12" rx="11.69" fill="#131313"/>
+  <rect x="14.64" y="25.83" width="4.36" height="12.33" rx="2.18" fill="#A3A099"/>
+  <rect x="22.23" y="22.04" width="4.36" height="19.92" rx="2.18" fill="#E8E6E1"/>
+  <rect x="29.82" y="18.25" width="4.36" height="27.51" rx="2.18" fill="#C9C2B4"/>
+  <rect x="37.41" y="22.04" width="4.36" height="19.92" rx="2.18" fill="#E8E6E1"/>
+  <rect x="45.00" y="25.83" width="4.36" height="12.33" rx="2.18" fill="#A3A099"/>
 </svg>
