@@ -1174,16 +1174,10 @@
   const isDesktopBand = () => window.matchMedia("(min-width: 761px)").matches;
   // Desktop and mobile each remember their own panel height — a height that feels
   // right on a wide screen would swamp a phone, and vice-versa.
-  // …and a separate one for the squeezed panel: there the panel is
-  // allowed to shrink below --panel-h so the notepad keeps its floor, so a drag
-  // made while squeezed starts from a squeezed box and would otherwise persist
-  // that squeezed height as the normal one.
-  // The "zx-" key prefix is kept as-is so existing installs don't lose their
-  // saved heights.
-  const panelHKey = () => {
-    const base = isDesktopBand() ? "zx-panel-h" : "zx-panel-h-mobile";
-    return document.body.classList.contains("dictation-on") ? base + "-dictation" : base;
-  };
+  // The "zx-" prefix and "-dictation" suffix are kept as-is so existing installs
+  // don't lose their saved heights.
+  const panelHKey = () =>
+    isDesktopBand() ? "zx-panel-h-dictation" : "zx-panel-h-mobile-dictation";
   const clampPanelH = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
   const MIN_PANEL_H = 140;
   // Desktop: most of the viewport. Mobile: keep the panel within the band by
@@ -1257,9 +1251,9 @@
       handle.setPointerCapture(e.pointerId);
       handle.classList.add("dragging");
       document.body.classList.add("resizing");
-      // Seed from the RENDERED box, not from --panel-h. In dictation the panel is
-      // allowed to shrink below the variable (app.html body.dictation-on rule) so
-      // the notepad keeps its floor, and seeding from the variable would make the
+      // Seed from the RENDERED box, not from --panel-h. The panel is allowed to
+      // shrink below the variable (app.html's .explain-panel flex rule) so the
+      // notepad keeps its floor, and seeding from the variable would make the
       // first N px of every drag do nothing. curPanelH() is the fallback for a
       // panel that has not been laid out yet.
       const boxH = Math.round(handle.parentElement.getBoundingClientRect().height);

@@ -7,33 +7,20 @@
 // or in db.js/server.js assumes only one level.
 //
 // importMedia() copies the source into library/<type>s/<slug>/ (the
-// original is never moved or deleted), probes it with ffprobe for
-// duration/video-stream presence, registers it in the DB, then transcribes
-// it once — verbatim Crisper (see backend/transcribe.js) — and stores the
-// transcript alongside the file.
+// original is never moved or deleted), registers it in the DB, then
+// transcribes it once — verbatim Crisper (see backend/transcribe.js) — and
+// stores the transcript alongside the file.
 
 const fs = require("fs");
 const path = require("path");
-const { execFileSync } = require("child_process");
 const db = require("./db");
-const { transcribeVerbatim, sha256File } = require("./transcribe");
+const { transcribeVerbatim } = require("./transcribe");
 
 function slugify(title) {
   return title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "") || "untitled";
-}
-
-function ffprobe(filePath) {
-  const out = execFileSync("ffprobe", [
-    "-v", "error",
-    "-print_format", "json",
-    "-show_format",
-    "-show_streams",
-    filePath,
-  ]);
-  return JSON.parse(out.toString("utf8"));
 }
 
 // A bare "collection" entry — no media file of its own, just a title, to
@@ -77,29 +64,16 @@ async function importMedia({ sourcePath, type, title, id, parentId } = {}) {
   console.log(`Copying "${filename}" into ${destPath} ...`);
   fs.copyFileSync(sourcePath, destPath);
 
-  console.log("Probing with ffprobe...");
-  const probe = ffprobe(destPath);
-  const durationSec = Math.round(parseFloat(probe.format?.duration || "0"));
-  const hasVideoStream = (probe.streams || []).some((s) => s.codec_type === "video");
-  const hasVideo = type === "movie" && hasVideoStream;
-
-  console.log("Hashing copied file...");
-  const sha256 = await sha256File(destPath);
-
   const entry = db.upsertEntry({
     id: slug,
     type,
     title,
-    filename,
     filePath: destPath,
     dir: destDir,
-    hasVideo,
-    durationSec,
-    sha256,
     transcriptStatus: "pending",
     ...(parentId ? { parentId } : {}),
   });
-  console.log(`Registered entry "${entry.id}" (durationSec=${durationSec}, hasVideo=${hasVideo}).`);
+  console.log(`Registered entry "${entry.id}".`);
 
   const transcriptPath = path.join(destDir, "transcript.json");
   db.upsertEntry({ id: slug, transcriptStatus: "processing", transcriptPath });

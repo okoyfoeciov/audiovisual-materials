@@ -205,7 +205,7 @@ app.get("/api/library/:id/stream", (req, res) => {
   const entry = db.getEntry(req.params.id);
   if (!entry || !entry.filePath || !fs.existsSync(entry.filePath)) return res.sendStatus(404);
   // res.sendFile (built on the `send` package) already implements HTTP
-  // Range + conditional GET, so this is seekable video/audio for free.
+  // Range + conditional GET, so this is seekable media for free.
   res.sendFile(entry.filePath, (err) => {
     if (err && !res.headersSent) res.sendStatus(404);
   });

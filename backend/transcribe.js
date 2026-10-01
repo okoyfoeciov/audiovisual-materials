@@ -20,8 +20,7 @@
 // its header: plain JSON by design).
 
 const fs = require("fs/promises");
-const { createReadStream, statSync } = require("fs");
-const crypto = require("crypto");
+const { statSync } = require("fs");
 
 const TX_MAX = 2 * 1024 * 1024 * 1024;
 const TX_POLL_MS = 4000;
@@ -38,16 +37,6 @@ const CRISPER_TOKEN = process.env.CRISPER_TOKEN || (() => {
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
-}
-
-function sha256File(filePath) {
-  return new Promise((resolve, reject) => {
-    const hash = crypto.createHash("sha256");
-    const stream = createReadStream(filePath);
-    stream.on("data", (chunk) => hash.update(chunk));
-    stream.on("end", () => resolve(hash.digest("hex")));
-    stream.on("error", reject);
-  });
 }
 
 // Retry policy for polling: network blips, 5xx, and busy/not-ready (409/429)
@@ -112,4 +101,4 @@ async function transcribeVerbatim(filePath, { onProgress = () => {} } = {}) {
   }
 }
 
-module.exports = { transcribeVerbatim, sha256File };
+module.exports = { transcribeVerbatim };

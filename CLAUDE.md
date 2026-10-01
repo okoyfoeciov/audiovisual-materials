@@ -39,7 +39,7 @@ state — it says nothing about what this repo is supposed to use.
 ```bash
 git config --local credential.https://github.com.helper ""            # reset inherited helpers
 git config --local --add credential.https://github.com.helper \
-    "/home/james/audiovisual-materials/.githelpers/credential-from-env.sh"
+    "/home/james/daily-dictation/.githelpers/credential-from-env.sh"
 ```
 
 The empty first value **resets** the helper list inherited from `~/.gitconfig`,
@@ -121,11 +121,10 @@ cron-written `pbs-sync.log` is untracked by omission, not by rule.
 A dictation-only Electron desktop app: daily dictation sessions cut from PBS
 NewsHour segments (audio-only, 1–2 sentences per session, looped), with
 WER-based grading, SM-2 spaced scheduling, and click-a-word AI explanations.
-The Watch feature (library grid, video stage, transcript caption, per-entry
-progress) was removed in 2026-09; only the PBS corpus under
-`library/collections/pbs-newshour*` + `library/movies/*` remains, and the only
-media route left is `GET /api/library/:id/stream`, which serves the segment
-audio the dictation loop plays inside of.
+The corpus lives under `library/collections/pbs-newshour*` +
+`library/movies/*`, and the only media route is
+`GET /api/library/:id/stream`, which serves the segment audio the dictation
+loop plays inside of.
 
 `app-player.js` owns the shared `<audio>` transport (play/pause/seek/time,
 mobile collapse, keyboard) and the explanation panel (via `/api/explain`,

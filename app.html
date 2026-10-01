@@ -132,9 +132,11 @@
 
   /* The single explanation panel. Anchored to the bottom of the band
      (nearest the reference line) at a draggable height (--panel-h); the space
-     above is empty. */
+     above is empty. It takes --panel-h (60vh, up to 85vh once dragged) but
+     yields once the notepad hits a floor that actually fits topbar + textarea
+     + actions. */
   .explain-panel {
-    flex: 0 0 var(--panel-h, 60vh);
+    flex: 0 1 var(--panel-h, 60vh);
     min-height: 0;
     position: relative;            /* anchor for the top-edge resize handle */
     display: flex;
@@ -420,8 +422,7 @@
      switching it on turns it the accent orange the play button already wears,
      and that colour IS the "it is looping" signal. Disabled until a session
      loads. */
-  .ab-loop { display: none; color: var(--text-soft); }
-  body.dictation-on .ab-loop { display: flex; }
+  .ab-loop { color: var(--text-soft); }
   .ab-loop:hover { color: var(--text); }
   .ab-loop:active { transform: scale(0.94); }
   /* After :hover deliberately — equal specificity, so the later rule wins and a
@@ -635,7 +636,7 @@
   .dictation-view {
     order: -1;
     flex: 1 1 auto;
-    min-height: 0;
+    min-height: min(280px, 40vh);
     overflow-y: auto;
     padding: 18px 32px 20px;
     display: flex;
@@ -872,13 +873,11 @@
   /* Reference panel — the session sentence, living INSIDE .player, first thing
      above the controls. 40px floor (one line), 26vh cap, -14px side margin
      against .player's 16px gutter with the 14px side padding put back, 2px/9px
-     vertical padding, left-aligned; serif 17px/1.55, weight 600, --text. A
-     dictation session is only its own sentence, so there is no context line. */
+     vertical padding, left-aligned; serif 17px/1.55, weight 600, --text. */
   .dictation-ref-panel {
     display: block;
   }
   .dictation-ref-panel[hidden] { display: none; }
-  body:not(.dictation-on) .dictation-ref-panel { display: none !important; }
   .dictation-ref-scroll {
     min-height: 40px;
     max-height: 26vh;
@@ -916,23 +915,18 @@
     font-size: 14px;
   }
   .dictation-empty p { margin: 0 0 12px; }
-  /* The explanation panel flexes against the dictation view: it takes
-     --panel-h (60vh, up to 85vh once dragged) but yields once the notepad
-     hits a floor that actually fits topbar + textarea + actions. */
-  body.dictation-on .explain-panel { flex: 0 1 var(--panel-h, 60vh); }
   /* An explanation panel is created on first use (makePanel) and never removed;
      resetPanelThread only empties its content box. Collapse the panel while it
      holds nothing, handle included, so an empty 60vh slab never shoves the
      notepad up the screen. */
-  body.dictation-on .explain-panel:has(> .explain-content:empty) {
+  .explain-panel:has(> .explain-content:empty) {
     flex-basis: 0;
     min-height: 0;
     border-top: none;
   }
-  body.dictation-on .explain-panel:has(> .explain-content:empty) > .panel-resize {
+  .explain-panel:has(> .explain-content:empty) > .panel-resize {
     display: none;
   }
-  body.dictation-on .dictation-view { min-height: min(280px, 40vh); }
   @media (max-width: 760px) {
     .dictation-view { padding-left: 16px; padding-right: 16px; }
     .dictation-textarea { font-size: 16px; min-height: 120px; }

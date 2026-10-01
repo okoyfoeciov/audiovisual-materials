@@ -70,7 +70,8 @@
   const AB_MIN_AUDIBLE = 0.12; // below this a loop window is inaudible, so treat it as degenerate
 
   // Playback rate for the segment. Persisted, because a learner who needs 0.75x
-  // needs it on every session, not once.
+  // needs it on every session, not once. The "av-" prefix is kept so existing
+  // installs keep their saved rate.
   const LS_DICT_RATE = "av-dictation-rate";
   const DICT_RATE_MIN = 0.6, DICT_RATE_MAX = 1.0;
   let dictRate = 1.0;
@@ -80,9 +81,7 @@
   // than a click per repetition. Per session, NOT persisted: looping is what
   // you switch on at the end of a session, to drill the sentence you have just
   // checked — a new session always starts with it off, so a saved value would
-  // only ever be overwritten the moment the first session loads. (It used to
-  // be saved under "av-dictation-loop"; initDictLoop clears that key so an old
-  // "1" can never come back.)
+  // only ever be overwritten the moment the first session loads.
   let dictLoopEnabled = false;
 
   function fmt(s) {
@@ -148,7 +147,6 @@
   // ---------------------------------------------------------------------------
 
   function initDictationView() {
-    document.body.classList.add("dictation-on");
     if (dictView) dictView.hidden = false;
     if (playerEl) playerEl.hidden = false;
     // Resize observer in app-player.js measures player height for --player-h.
@@ -256,7 +254,6 @@
   }
 
   (function initDictLoop() {
-    try { localStorage.removeItem("av-dictation-loop"); } catch {}
     setDictLoop(false);
     if (dictLoopBtn) dictLoopBtn.addEventListener("click", () => setDictLoop(!dictLoopEnabled));
   })();
@@ -551,8 +548,8 @@
       return;
     }
 
-    // New entry: point the <audio> at it. No transcript fetch, no video —
-    // dictation loops a small window inside the segment's file.
+    // New entry: point the <audio> at it — dictation loops a small window
+    // inside the segment's file.
     audioEl.src = src;
     try { audioEl.load(); } catch {}
     // Wait for metadata to know duration before seeking
