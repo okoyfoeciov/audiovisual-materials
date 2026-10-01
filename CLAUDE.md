@@ -137,9 +137,7 @@ app's embedded backend (`main.js` starts `backend/server.js` in-process on
 loopback; library lives in `<repo>/library` in dev, `<userData>/library`
 packaged — see `backend/paths.js`). `backend/dictation.js` holds the session-partition algorithm, the scheduler,
 and the WER grader. `backend/pbs-sync.js` (cron, daily) pulls new PBS
-segments with verbatim Crisper transcription; the Parakeet "clean" path in
-`backend/transcribe.js` is the default for manual `backend/import.js` CLI
-imports (pbs-sync always passes `verbatim: true`).
+segments with verbatim Crisper transcription via `backend/import.js`.
 `main.js` is the Electron shell. Avoid changing `app-player.js`'s explanation
 engine unless the task requires it.
 

@@ -33,23 +33,6 @@
       U+20AD-20CF, U+2113, U+2C60-2C7F, U+A720-A7FF;
   }
 
-  /* Lora — retired with the Substack theme (Stone Silence is all-sans).
-     Files stay beside app.html; --serif no longer references them. */
-  @font-face {
-    font-family: "Lora";
-    font-style: normal;
-    font-weight: 400 700;
-    font-display: swap;
-    src: url("Lora-Latin.woff2") format("woff2");
-  }
-  @font-face {
-    font-family: "Lora";
-    font-style: italic;
-    font-weight: 400 700;
-    font-display: swap;
-    src: url("Lora-Latin-Italic.woff2") format("woff2");
-  }
-
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
   :root {
@@ -96,7 +79,7 @@
 
     /* Stone Silence is all-sans: --serif is an alias of --sans so every
        reading surface (reference, explanations, notepad) renders in the
-       same neutral face. The Lora files below stay on disk unused. */
+       same neutral face. */
     --serif: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
              "Helvetica Neue", Arial, sans-serif;
     --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
@@ -745,14 +728,6 @@
     align-items: center;
     gap: 6px;
   }
-  .dictation-loop-hint .dot {
-    width: 7px; height: 7px;
-    border-radius: 50%;
-    background: var(--accent);
-    display: inline-block;
-    animation: dict-pulse 1.2s ease infinite;
-  }
-  @keyframes dict-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
   .dictation-notepad-wrap {
     flex: 0 0 auto;
     display: flex;

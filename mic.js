@@ -299,15 +299,12 @@
   }
 
   let closeTimer = 0;
-  let closing = false;
   function closeModal(release = true) {
     if (modal.hidden) return;
     modal.classList.remove("mic-show");
     clearTimeout(closeTimer);
-    closing = true;
     closeTimer = setTimeout(() => {
       modal.hidden = true;
-      closing = false;
       if (release) dropClip();
       paint(null);
       player.hidden = false;

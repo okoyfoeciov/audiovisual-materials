@@ -268,7 +268,7 @@ async function sync({ dryRun = false } = {}) {
       try {
         // Verbatim Crisper transcription keeps fillers ("you know", "um") in
         // the reference, which is what the dictation checker scores against.
-        const entry = await importMedia({ sourcePath: filePath, type: "movie", title: seg.title, parentId: dayId, verbatim: true });
+        const entry = await importMedia({ sourcePath: filePath, type: "movie", title: seg.title, parentId: dayId });
         db.upsertEntry({ id: entry.id, sourceId: seg.videoId });
         console.log(`Imported "${seg.title}" as "${entry.id}".`);
       } finally {

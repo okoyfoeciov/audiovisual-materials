@@ -1,25 +1,22 @@
 "use strict";
 
 // Bring a media file into the library, or create a bare "collection" entry
-// to group segments under. Used both as a CLI:
-//   node backend/import.js <sourcePath> --type=<movie|audio|podcast> --title="<title>" [--parent=<collectionId>]
-//   node backend/import.js --collection --title="<title>" [--id=<slug>] [--parent=<collectionId>]
-// ...and as a library by backend/pbs-sync.js, which imports segments
-// programmatically instead of one at a time by hand — collections can nest
-// (a "day" collection's parentId points at a "show" collection), since
-// nothing here or in db.js/server.js assumes only one level.
+// to group segments under. Used as a library by backend/pbs-sync.js, which
+// imports segments programmatically — collections can nest (a "day"
+// collection's parentId points at a "show" collection), since nothing here
+// or in db.js/server.js assumes only one level.
 //
 // importMedia() copies the source into library/<type>s/<slug>/ (the
 // original is never moved or deleted), probes it with ffprobe for
 // duration/video-stream presence, registers it in the DB, then transcribes
-// it once — clean Parakeet or verbatim Crisper (see backend/transcribe.js)
-// — and stores the transcript alongside the file.
+// it once — verbatim Crisper (see backend/transcribe.js) — and stores the
+// transcript alongside the file.
 
 const fs = require("fs");
 const path = require("path");
 const { execFileSync } = require("child_process");
 const db = require("./db");
-const { transcribe, transcribeVerbatim, sha256File } = require("./transcribe");
+const { transcribeVerbatim, sha256File } = require("./transcribe");
 
 function slugify(title) {
   return title
@@ -59,7 +56,7 @@ async function createCollection({ title, id, parentId } = {}) {
   });
 }
 
-async function importMedia({ sourcePath, type, title, id, parentId, verbatim = false } = {}) {
+async function importMedia({ sourcePath, type, title, id, parentId } = {}) {
   if (!sourcePath || !["movie", "audio", "podcast"].includes(type) || !title) {
     throw new Error("importMedia requires sourcePath, type (movie|audio|podcast), and title");
   }
@@ -107,10 +104,9 @@ async function importMedia({ sourcePath, type, title, id, parentId, verbatim = f
   const transcriptPath = path.join(destDir, "transcript.json");
   db.upsertEntry({ id: slug, transcriptStatus: "processing", transcriptPath });
 
-  console.log(`Starting transcription (${verbatim ? "verbatim Crisper 8789" : "clean Parakeet 8790"} — this can take a while for large files)...`);
+  console.log("Starting transcription (verbatim Crisper 8789 — this can take a while for large files)...");
   try {
-    const fn = verbatim ? transcribeVerbatim : transcribe;
-    const transcript = await fn(destPath, {
+    const transcript = await transcribeVerbatim(destPath, {
       onProgress: (msg) => console.log(`  [transcribe] ${msg}`),
     });
     fs.writeFileSync(transcriptPath, JSON.stringify(transcript));
@@ -120,64 +116,6 @@ async function importMedia({ sourcePath, type, title, id, parentId, verbatim = f
     db.upsertEntry({ id: slug, transcriptStatus: "error" });
     throw new Error(`Transcription failed for "${title}": ${err.message}`);
   }
-}
-
-/* ---------- CLI wrapper ---------- */
-
-const USAGE =
-  'Usage:\n' +
-  '  node backend/import.js <sourcePath> --type=<movie|audio|podcast> --title="<title>" [--parent=<collectionId>] [--verbatim]\n' +
-  '  node backend/import.js --collection --title="<title>" [--id=<slug>] [--parent=<collectionId>]';
-
-function parseArgs(argv) {
-  const out = { _: [] };
-  for (const arg of argv) {
-    const m = arg.match(/^--([^=]+)=(.*)$/);
-    if (m) out[m[1]] = m[2];
-    else if (arg.startsWith("--")) out[arg.slice(2)] = true;
-    else out._.push(arg);
-  }
-  return out;
-}
-
-async function main() {
-  const args = parseArgs(process.argv.slice(2));
-
-  if (args.collection) {
-    if (!args.title) {
-      console.error(USAGE);
-      process.exitCode = 1;
-      return;
-    }
-    try {
-      const entry = await createCollection({ title: args.title, id: args.id, parentId: args.parent });
-      console.log(`Registered collection "${entry.id}".`);
-    } catch (err) {
-      console.error(err.message);
-      process.exitCode = 1;
-    }
-    return;
-  }
-
-  const sourcePath = args._[0];
-  const type = args.type;
-  const title = args.title;
-  if (!sourcePath || !["movie", "audio", "podcast"].includes(type) || !title) {
-    console.error(USAGE);
-    process.exitCode = 1;
-    return;
-  }
-
-  try {
-    await importMedia({ sourcePath, type, title, parentId: args.parent, verbatim: !!args.verbatim });
-  } catch (err) {
-    console.error(err.message);
-    process.exitCode = 1;
-  }
-}
-
-if (require.main === module) {
-  main();
 }
 
 module.exports = { importMedia, createCollection };

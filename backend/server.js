@@ -54,10 +54,8 @@ app.all(EXPLAIN_PATHS, express.raw({ type: () => true, limit: "10mb" }), async (
 // The floating microphone button's transcription call (mic.js) — a single
 // short recording POSTed as a raw audio blob, proxied straight through to
 // comart's own /api/transcribe (a one-shot short-clip endpoint, capped
-// client-side at 60s — distinct from the chunked long-file protocol
-// backend/transcribe.js uses for import-time transcription). Raw body
-// passthrough, same shape as the EXPLAIN_PATHS proxy above, sized for a
-// ~60s opus clip (well under 1MB) with headroom.
+// client-side at 60s). Raw body passthrough, same shape as the EXPLAIN_PATHS
+// proxy above, sized for a ~60s opus clip (well under 1MB) with headroom.
 app.post("/api/transcribe", express.raw({ type: () => true, limit: "20mb" }), async (req, res) => {
   try {
     const upstream = await fetch(`${COMART_BASE}/api/transcribe`, {
