@@ -2,16 +2,18 @@
 
 // The dictation backend. Streams PBS segment media files (range-request
 // capable, for seeking) for Daily Dictation playback, serves the dictation
-// session/grading/scheduling API, and proxies the explanation, pronunciation,
-// credit, and mic-transcription calls through to comart. Embedded in the
-// Electron app — main.js starts it in-process via start() before the window
-// loads, so the app is a single local-only program with no separate backend
-// process. Reached at the loopback URL app-base.js resolves.
+// session/grading/scheduling API, runs the catch-up sync for new PBS segments
+// (backend/pbs-sync.js), and proxies the explanation, pronunciation, credit,
+// and mic-transcription calls through to comart. Embedded in the Electron app
+// — main.js starts it in-process via start() before the window loads, so the
+// app is a single local-only program with no separate backend process.
+// Reached at the loopback URL app-base.js resolves.
 
 const fs = require("fs");
 const express = require("express");
 const db = require("./db");
 const paths = require("./paths");
+const pbsSync = require("./pbs-sync");
 
 const DEFAULT_PORT = Number(process.env.PORT) || 8768;
 // comart's local server, which backs the explain/pron/credits/transcribe
@@ -198,6 +200,57 @@ app.post("/api/dictation/complete", (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Catch-up sync — the app checks for new PBS segments on launch and every few
+// hours while it runs (see backend/pbs-sync.js). It runs in the background;
+// the app's status line polls /api/sync/status.
+// ---------------------------------------------------------------------------
+const SYNC_START_DELAY_MS = 5 * 1000;
+const SYNC_INTERVAL_MS = 3 * 60 * 60 * 1000;
+
+let syncState = { state: "idle", at: 0 };
+let syncRunning = false;
+let syncStartTimer = null;
+let syncIntervalTimer = null;
+
+function publishSyncProgress(p) {
+  if (p.phase === "fetch") {
+    syncState = { ...syncState, state: "checking" };
+  } else if (p.phase === "importing" || p.phase === "repairing") {
+    syncState = { ...syncState, state: p.phase, current: p.current, total: p.total, title: p.title || "" };
+  }
+}
+
+async function runSyncCheck() {
+  if (syncRunning) return;
+  syncRunning = true;
+  syncState = { state: "checking", at: Date.now(), imported: 0, repaired: 0, failed: 0, current: 0, total: 0, title: "" };
+  try {
+    const r = await pbsSync.sync({ onProgress: publishSyncProgress });
+    syncState = {
+      state: r.locked ? "idle" : "done",
+      at: Date.now(),
+      imported: r.imported || 0,
+      repaired: r.repaired || 0,
+      failed: r.failed || 0,
+      current: 0, total: 0, title: "",
+    };
+  } catch (e) {
+    console.error("catch-up sync failed", e);
+    syncState = { state: "error", at: Date.now(), error: String(e.message || e), imported: 0, repaired: 0, failed: 0, current: 0, total: 0, title: "" };
+  } finally {
+    syncRunning = false;
+  }
+}
+
+app.get("/api/sync/status", (req, res) => res.json(syncState));
+
+// Manual trigger — a forced check without waiting for the launch/interval one.
+app.post("/api/sync/run", (req, res) => {
+  runSyncCheck();
+  res.json({ started: true });
+});
+
 // Media streaming for Daily Dictation playback. The dictation client loops a
 // small window inside the PBS segment's file, served here with HTTP Range +
 // conditional GET (via res.sendFile, which implements both), so seeking works.
@@ -227,6 +280,11 @@ function start({ port = DEFAULT_PORT, libraryDir = null } = {}) {
       server = s;
       livePort = port;
       console.log(`daily-dictation backend listening on http://127.0.0.1:${port}`);
+      // Catch-up check: shortly after boot, then on a timer while the app runs.
+      clearTimeout(syncStartTimer);
+      clearInterval(syncIntervalTimer);
+      syncStartTimer = setTimeout(runSyncCheck, SYNC_START_DELAY_MS);
+      syncIntervalTimer = setInterval(runSyncCheck, SYNC_INTERVAL_MS);
       resolve(s);
     });
     s.on("error", reject);
@@ -235,6 +293,10 @@ function start({ port = DEFAULT_PORT, libraryDir = null } = {}) {
 
 function stop() {
   return new Promise((resolve) => {
+    clearTimeout(syncStartTimer);
+    clearInterval(syncIntervalTimer);
+    syncStartTimer = null;
+    syncIntervalTimer = null;
     if (!server) return resolve();
     const s = server;
     server = null;

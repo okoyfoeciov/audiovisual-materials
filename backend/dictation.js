@@ -757,8 +757,10 @@ function getPBSEntries() {
     return false;
   }
 
+  // "movie" is the older mp4 corpus, "audio" the RSS podcast imports — the
+  // dictation loop only ever plays the sound track either way.
   return all.filter(
-    (e) => e.type === "movie" && isUnderPBS(e) && e.transcriptStatus === "ready" && e.transcriptPath,
+    (e) => (e.type === "movie" || e.type === "audio") && isUnderPBS(e) && e.transcriptStatus === "ready" && e.transcriptPath,
   );
 }
 

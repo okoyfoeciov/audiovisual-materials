@@ -114,15 +114,16 @@ worktree marker that must stay untracked *and* must not be added to
 media, `db.json`, `dictation.json`). `.env` must never be committed. Everything
 else — including `build/icon.png` and `build/icons/`, which `package.json`'s
 `build.mac`/`build.linux` config references directly — is tracked. The
-cron-written `pbs-sync.log` is untracked by omission, not by rule.
+legacy `pbs-sync.log` (from when the sync ran from cron) is untracked by omission, not by rule.
 
 ### About this project
 
 A dictation-only Electron desktop app: daily dictation sessions cut from PBS
 NewsHour segments (audio-only, 1–2 sentences per session, looped), with
 WER-based grading, SM-2 spaced scheduling, and click-a-word AI explanations.
-The corpus lives under `library/collections/pbs-newshour*` +
-`library/movies/*`, and the only media route is
+The corpus lives under `library/collections/pbs-newshour*`, with media in
+`library/movies/*` (the older mp4 corpus) and `library/audios/*` (the RSS
+audio imports), and the only media route is
 `GET /api/library/:id/stream`, which serves the segment audio the dictation
 loop plays inside of.
 
@@ -135,8 +136,11 @@ the notepad UI, the session loop, and grading, and reaches the panel through
 app's embedded backend (`main.js` starts `backend/server.js` in-process on
 loopback; library lives in `<repo>/library` in dev, `<userData>/library`
 packaged — see `backend/paths.js`). `backend/dictation.js` holds the session-partition algorithm, the scheduler,
-and the WER grader. `backend/pbs-sync.js` (cron, daily) pulls new PBS
-segments with verbatim Crisper transcription via `backend/import.js`.
+and the WER grader. `backend/pbs-sync.js` is the catch-up sync: the embedded
+backend runs it on app launch and every few hours, pulling new PBS segments
+from the segments RSS audio with verbatim Crisper transcription (via
+`backend/import.js`), repairing broken transcripts, and pruning days past
+`KEEP_DAYS`.
 `main.js` is the Electron shell. Avoid changing `app-player.js`'s explanation
 engine unless the task requires it.
 

@@ -34,6 +34,7 @@
   const dictEmptyEl = document.getElementById("dictation-empty");
   const dictEmptyMsg = document.getElementById("dictation-empty-msg");
   const dictRetryBtn = document.getElementById("dictation-retry");
+  const dictSyncEl = document.getElementById("dictation-sync");
 
   // The <audio> element (owned by app-player.js) — dictation loops a small
   // window inside it.
@@ -202,6 +203,52 @@
   async function refreshDictationView() {
     const p = await fetchDictStats();
     if (p) renderDictStats(p);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Catch-up sync status
+  //
+  // The backend checks for new PBS segments on launch and every few hours (see
+  // backend/pbs-sync.js), filling in anything missing and repairing broken
+  // transcripts. This shows what it is doing, and hides when there is nothing
+  // to report.
+  // ---------------------------------------------------------------------------
+  let lastSyncState = null;
+
+  function renderSyncStatus(st) {
+    if (!dictSyncEl) return;
+    const s = st || {};
+    let text = "";
+    if (s.state === "checking") {
+      text = "Checking for new episodes…";
+    } else if (s.state === "importing" || s.state === "repairing") {
+      const verb = s.state === "repairing" ? "Repairing" : "Importing";
+      text = s.total ? `${verb} ${s.current}/${s.total}…` : `${verb}…`;
+    } else if (s.state === "done") {
+      const bits = [];
+      if (s.imported) bits.push(`Added ${s.imported} new episode${s.imported === 1 ? "" : "s"}`);
+      if (s.repaired) bits.push(`repaired ${s.repaired}`);
+      // Keep the result on screen for a beat after the run finishes.
+      if (bits.length && Date.now() - (s.at || 0) < 12000) text = bits.join(" · ");
+    } else if (s.state === "error") {
+      text = "New-episode check failed — will retry";
+    }
+    dictSyncEl.textContent = text;
+    dictSyncEl.hidden = !text;
+  }
+
+  async function pollSyncStatus() {
+    try {
+      const r = await fetch(apiBase() + "/api/sync/status");
+      if (!r.ok) return;
+      const st = await r.json();
+      const becameDone = lastSyncState !== "done" && st.state === "done";
+      lastSyncState = st.state;
+      renderSyncStatus(st);
+      // New transcripts mean new sessions — refresh the stats the moment a
+      // run that imported or repaired something finishes.
+      if (becameDone && (st.imported || st.repaired)) refreshDictationView();
+    } catch { /* backend briefly unavailable; the next poll retries */ }
   }
 
   // ---------------------------------------------------------------------------
@@ -988,6 +1035,8 @@
   initDictationView();
   refreshDictationView();
   loadNextSession({ autoplay: false });
+  pollSyncStatus();
+  setInterval(pollSyncStatus, 10000);
 
   // Expose for console debugging
   window.__dictation = {

@@ -680,6 +680,19 @@
   .dictation-stats .recent i.good { background: var(--accent); }
   .dictation-stats .recent i.bad  { background: #c2554a; }
 
+  /* Catch-up sync status — what the backend is doing about new episodes (see
+     backend/pbs-sync.js). Quiet; hidden whenever there is nothing to say. */
+  .dictation-sync {
+    font-family: var(--sans);
+    font-size: 11.5px;
+    color: var(--text-dim);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+  }
+  .dictation-sync[hidden] { display: none !important; }
+
   /* Speech-rate control. Zhao (1997) found learners given rate control reached
      comprehension that learners given unlimited REPETITION at full speed did
      not, and this corpus runs at a median 181 wpm — already the fast band for
@@ -971,6 +984,7 @@
           <output id="dictation-rate-val">1.0×</output>
         </span>
         <span class="dictation-stats" id="dictation-stats" hidden></span>
+        <span class="dictation-sync" id="dictation-sync" hidden></span>
         <button class="dictation-btn ghost" id="dictation-next" type="button" title="Next session — records the attempt, does not retire it">Next →</button>
       </div>
       <div class="dictation-notepad-wrap" id="dictation-notepad-wrap" hidden>

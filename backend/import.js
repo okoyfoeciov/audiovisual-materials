@@ -92,4 +92,4 @@ async function importMedia({ sourcePath, type, title, id, parentId } = {}) {
   }
 }
 
-module.exports = { importMedia, createCollection };
+module.exports = { importMedia, createCollection, slugify };

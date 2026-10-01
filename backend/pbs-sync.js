@@ -1,39 +1,40 @@
 "use strict";
 
-// Daily sync: pulls new PBS NewsHour segments into the library, grouped
-// under a "PBS NewsHour" collection by day (see backend/import.js's header
-// for how collections nest).
+// Catch-up sync: pulls new PBS NewsHour segments into the library, grouped
+// under a "PBS NewsHour" collection by day.
 //
-//   node backend/pbs-sync.js
+// Called by the embedded backend (backend/server.js) on app launch and every
+// few hours while the app runs; also runnable standalone for debugging:
 //
-// The downloads are video files, but the app only ever plays their audio
-// track (dictation loops a 1–2 sentence window inside the segment).
+//   node backend/pbs-sync.js [--dry-run] [--limit=N]
 //
-// PBS NewsHour's own site only syndicates segments as audio
-// (https://www.pbs.org/newshour/feeds/rss/podcasts/segments) — no video RSS
-// exists. The video versions live on their YouTube channel instead, but
-// that channel's upload feed also carries full broadcasts, YouTube Shorts,
-// and other unrelated uploads. So: treat the audio RSS as the authoritative
-// list of what's really a segment (title + publish date), and only pull
-// from YouTube the videos whose title matches an RSS item. Anything in the
-// YouTube feed with no RSS match is skipped and logged, not silently
-// dropped — see the "skipped" log line below.
+// Source: PBS's own segments RSS. It is the authoritative list of what is a
+// real segment (title + publish date) and every item carries a direct audio
+// download link (the podcast file). Dictation only ever plays audio, so the
+// RSS audio is the whole pipeline — no YouTube, no yt-dlp, no matching
+// against a video feed that only carries the last ~15 uploads.
 //
-// Idempotent: each imported entry stores the source YouTube video id as
-// sourceId; already-imported videos are skipped on the next run. After
-// importing, days older than KEEP_DAYS are deleted (entries + files).
+// Missing = an RSS item with no library entry under the same normalized
+// title (or sourceId). Newest day first, so today's episode lands first and
+// older gaps backfill behind it. Broken transcripts (interrupted writes,
+// failed jobs) are re-transcribed from their media file in the same pass.
+// Days beyond KEEP_DAYS are pruned (entries + files).
+//
+// Single-flight: a heartbeat lock in the library directory keeps a manual
+// CLI run and the app's own check from overlapping.
 
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { execFileSync } = require("child_process");
 const db = require("./db");
-const { importMedia, createCollection } = require("./import");
+const paths = require("./paths");
+const { importMedia, createCollection, slugify } = require("./import");
+const { transcribeVerbatim } = require("./transcribe");
 
 const PBS_SEGMENTS_RSS = "https://www.pbs.org/newshour/feeds/rss/podcasts/segments";
-const YOUTUBE_CHANNEL_FEED = "https://www.youtube.com/feeds/videos.xml?channel_id=UC6ZFN9Tx6xh-skXCuRHCDpQ";
 const SHOW_ID = "pbs-newshour";
 const SHOW_TITLE = "PBS NewsHour";
+
 // How many broadcast days of segments to keep before pruning.
 //
 // This number is coupled to the dictation scheduler — do not lower it without
@@ -42,52 +43,22 @@ const SHOW_TITLE = "PBS NewsHour";
 // orphans every attempt logged against them.
 //
 // An item retires after three spaced passes, at SM-2 intervals of 1 then 6 days,
-// so the fastest possible path from first exposure to retirement is 7 days —
-// exactly the old value here, which deleted the audio on the very day a flawless
-// learner would have finished with it, and a day before anyone who slipped once.
-// Failures cost almost nothing (they requeue in 20 minutes, same day); what
-// actually stretches the window is practising irregularly, which is the normal
-// case. 30 gives roughly 4x margin over that floor.
-//
-// Retirement is terminal, so the requirement is bounded: a mastered item never
-// needs its audio again and is fine to prune. That is why a modest number works
-// and no permanent per-session archive is needed. At ~226 MB per day this is
-// ~7 GB steady state.
+// so the fastest possible path from first exposure to retirement is 7 days.
+// Failures requeue in 20 minutes; what actually stretches the window is
+// practising irregularly, which is the normal case. 30 gives roughly 4x margin
+// over that floor, and a mastered item never needs its audio again — which is
+// why a modest number works and no permanent archive is needed.
 const KEEP_DAYS = 30;
-const YT_DLP_FORMAT = "bv*[height<=720]+ba/b[height<=720]";
 
-// yt-dlp resolved as an absolute path, not left to whatever PATH the caller
-// happens to have.
-//
-// This script's whole job is to run unattended from cron, and cron's PATH is
-// "/usr/bin:/bin" — which does not include /usr/local/bin, where yt-dlp
-// installs by default. execFileSync("yt-dlp", …) therefore threw ENOENT on
-// every download while working perfectly by hand. The same class of bug already
-// bit the node binary once (the crontab carries an absolute nvm path for
-// exactly that reason), so this resolves the path itself rather than leaving
-// the next person to rediscover it.
-//
-// Set YT_DLP to override.
-const YT_DLP_CANDIDATES = [
-  "/usr/local/bin/yt-dlp",
-  "/usr/bin/yt-dlp",
-  "/opt/homebrew/bin/yt-dlp",
-  path.join(os.homedir(), ".local/bin/yt-dlp"),
-];
+// A run heartbeats the lock before every item; a lock whose owner is gone, or
+// that is older than this, belongs to a dead run and can be taken over.
+const LOCK_STALE_MS = 15 * 60 * 1000;
 
-function resolveYtDlp() {
-  if (process.env.YT_DLP) return process.env.YT_DLP;
-  for (const p of YT_DLP_CANDIDATES) {
-    try { fs.accessSync(p, fs.constants.X_OK); return p; } catch {}
-  }
-  // Last resort: let PATH try, so an install somewhere unusual still works.
-  return "yt-dlp";
-}
-
-const YT_DLP_BIN = resolveYtDlp();
+const RSS_TIMEOUT_MS = 30 * 1000;
+const ENCLOSURE_TIMEOUT_MS = 120 * 1000;
 
 async function fetchText(url) {
-  const res = await fetch(url);
+  const res = await fetch(url, { signal: AbortSignal.timeout(RSS_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`GET ${url} -> HTTP ${res.status}`);
   return res.text();
 }
@@ -111,9 +82,8 @@ function extractTag(block, tag) {
   return decodeEntities(text.trim());
 }
 
-// PBS's audio segments RSS (RSS 2.0): title + pubDate per <item>, used only
-// as the authoritative "this is a real segment" list — the audio itself
-// isn't touched.
+// PBS's segments RSS (RSS 2.0): title + pubDate + audio enclosure per <item>.
+// The enclosure is the segment's own audio, which is all dictation needs.
 function parseSegmentsRss(xml) {
   const items = [];
   const itemRe = /<item>([\s\S]*?)<\/item>/g;
@@ -122,29 +92,18 @@ function parseSegmentsRss(xml) {
     const block = m[1];
     const title = extractTag(block, "title");
     const pubDate = extractTag(block, "pubDate");
-    if (title && pubDate) items.push({ title, pubDate });
-  }
-  return items;
-}
-
-// PBS NewsHour's YouTube channel feed (Atom): title + video id + link per
-// <entry>. Mixed bag — full episodes, Shorts, segments, unrelated uploads —
-// filtered down to real segments by parseSegmentsRss above.
-function parseYoutubeFeed(xml) {
-  const entries = [];
-  const entryRe = /<entry>([\s\S]*?)<\/entry>/g;
-  let m;
-  while ((m = entryRe.exec(xml))) {
-    const block = m[1];
-    const title = extractTag(block, "title");
-    const videoIdMatch = block.match(/<yt:videoId>([^<]+)<\/yt:videoId>/);
-    const linkMatch = block.match(/<link rel="alternate" href="([^"]+)"/);
-    if (title && videoIdMatch) {
-      const url = linkMatch ? linkMatch[1] : `https://www.youtube.com/watch?v=${videoIdMatch[1]}`;
-      entries.push({ title, videoId: videoIdMatch[1], url });
+    const guid = extractTag(block, "guid") || "";
+    const enc = block.match(/<enclosure[^>]*url="([^"]+)"/);
+    if (title && pubDate) {
+      items.push({
+        title,
+        pubDate,
+        guid,
+        enclosure: enc ? decodeEntities(enc[1]) : "",
+      });
     }
   }
-  return entries;
+  return items;
 }
 
 function normalizeTitle(t) {
@@ -156,13 +115,11 @@ function normalizeTitle(t) {
     .trim();
 }
 
-// Groups by the RSS item's own pubDate (PBS's editorial day), not
-// YouTube's upload timestamp, so a segment lands under the broadcast day it
-// actually belongs to. Both dateId and title are derived from the same UTC
-// calendar day — forcing UTC on the title too (not just dateId's
-// toISOString) keeps them from disagreeing when this runs on a machine
-// whose local timezone is far from PBS's US Eastern time (late-evening ET
-// items land after midnight UTC otherwise).
+// Groups by the RSS item's own pubDate (PBS's editorial day), not by when we
+// fetched it, so a segment lands under the broadcast day it belongs to. Both
+// dateId and title are derived from the same UTC calendar day — forcing UTC on
+// the title too (not just dateId's toISOString) keeps them from disagreeing on
+// a machine whose local timezone is far from PBS's US Eastern time.
 function dayInfoFromPubDate(pubDate) {
   const d = new Date(pubDate);
   if (isNaN(d.getTime())) return null;
@@ -171,29 +128,25 @@ function dayInfoFromPubDate(pubDate) {
   return { dateId, title };
 }
 
-// Downloads to a fresh temp dir (caller must remove it) and returns the
-// path to the single file yt-dlp produced.
-function downloadWithYtDlp(url, videoId) {
+// Downloads the segment audio to a fresh temp dir (caller must remove it) and
+// returns the path to the file.
+async function downloadEnclosure(url, title) {
+  const res = await fetch(url, { signal: AbortSignal.timeout(ENCLOSURE_TIMEOUT_MS) });
+  if (!res.ok) throw new Error(`GET enclosure -> HTTP ${res.status}`);
+  const ct = res.headers.get("content-type") || "";
+  if (ct.includes("text/html")) throw new Error("enclosure returned an HTML page, not audio");
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (!buf.length) throw new Error("enclosure came back empty");
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pbs-sync-"));
-  const outTemplate = path.join(tmpDir, `${videoId}.%(ext)s`);
-  execFileSync(YT_DLP_BIN, [
-    "-f", YT_DLP_FORMAT,
-    "--merge-output-format", "mp4",
-    "--no-playlist",
-    "-o", outTemplate,
-    url,
-  ], { stdio: "inherit" });
-  const files = fs.readdirSync(tmpDir);
-  if (!files.length) {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-    throw new Error(`yt-dlp produced no output file for ${url}`);
-  }
-  return { dir: tmpDir, filePath: path.join(tmpDir, files[0]) };
+  const filePath = path.join(tmpDir, `${slugify(title)}.mp3`);
+  fs.writeFileSync(filePath, buf);
+  return { dir: tmpDir, filePath };
 }
 
-// Day ids are "<SHOW_ID>-YYYY-MM-DD", which sorts correctly as plain
-// strings — no separate stored date field needed.
+// Day ids are "<SHOW_ID>-YYYY-MM-DD", which sorts correctly as plain strings —
+// no separate stored date field needed. Returns how many days were pruned.
 function pruneOldDays() {
+  let pruned = 0;
   const days = db.listChildren(SHOW_ID)
     .filter((e) => e.type === "collection")
     .sort((a, b) => b.id.localeCompare(a.id));
@@ -205,97 +158,205 @@ function pruneOldDays() {
     if (day.dir) fs.rmSync(day.dir, { recursive: true, force: true });
     db.deleteEntry(day.id);
     console.log(`Pruned old day "${day.id}" (${day.title}).`);
+    pruned++;
+  }
+  return pruned;
+}
+
+// --- single-flight lock -----------------------------------------------------
+
+function lockPath() {
+  return path.join(paths.getLibraryDir(), ".pbs-sync.lock");
+}
+
+function acquireLock() {
+  const p = lockPath();
+  try {
+    const st = fs.statSync(p);
+    const pid = Number(fs.readFileSync(p, "utf8")) || 0;
+    let alive = false;
+    if (pid) { try { process.kill(pid, 0); alive = true; } catch { /* owner is gone */ } }
+    if (alive && Date.now() - st.mtimeMs < LOCK_STALE_MS) return false;
+  } catch { /* no lock held */ }
+  try { fs.writeFileSync(p, String(process.pid)); } catch { /* unwritable: proceed without */ }
+  return true;
+}
+
+function heartbeatLock() {
+  try {
+    const now = new Date();
+    fs.utimesSync(lockPath(), now, now);
+  } catch { /* lock gone; nothing to keep alive */ }
+}
+
+function releaseLock() {
+  try {
+    if (fs.readFileSync(lockPath(), "utf8") === String(process.pid)) {
+      fs.rmSync(lockPath(), { force: true });
+    }
+  } catch { /* already gone */ }
+}
+
+// --- transcript health ------------------------------------------------------
+
+// Ready means the file parses and carries lines. A crash can leave the
+// metadata saying "ready" over a zero-filled or truncated file, which is
+// exactly what the repair pass is for.
+function transcriptIsReadable(entry) {
+  if (entry.transcriptStatus !== "ready" || !entry.transcriptPath) return false;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(entry.transcriptPath, "utf8"));
+    return Array.isArray(parsed.lines) && parsed.lines.length > 0;
+  } catch {
+    return false;
   }
 }
 
-async function sync({ dryRun = false } = {}) {
-  console.log("Fetching PBS segments RSS...");
-  const rssItems = parseSegmentsRss(await fetchText(PBS_SEGMENTS_RSS));
-  const rssByNormTitle = new Map(rssItems.map((item) => [normalizeTitle(item.title), item]));
-  console.log(`  ${rssItems.length} item(s) in the segments RSS.`);
-
-  console.log("Fetching PBS NewsHour YouTube channel feed...");
-  const ytEntries = parseYoutubeFeed(await fetchText(YOUTUBE_CHANNEL_FEED));
-  console.log(`  ${ytEntries.length} video(s) in the YouTube channel feed.`);
-
-  const matched = [];
-  const skipped = [];
-  for (const entry of ytEntries) {
-    const rssMatch = rssByNormTitle.get(normalizeTitle(entry.title));
-    if (rssMatch) matched.push({ ...entry, pubDate: rssMatch.pubDate });
-    else skipped.push(entry.title);
+async function repairEntry(entry) {
+  const transcriptPath = entry.transcriptPath || path.join(entry.dir, "transcript.json");
+  db.upsertEntry({ id: entry.id, transcriptStatus: "processing", transcriptPath });
+  try {
+    const transcript = await transcribeVerbatim(entry.filePath, {
+      onProgress: (msg) => console.log(`  [repair ${entry.id}] ${msg}`),
+    });
+    fs.writeFileSync(transcriptPath, JSON.stringify(transcript));
+    db.upsertEntry({ id: entry.id, transcriptStatus: "ready", transcriptPath });
+  } catch (err) {
+    db.upsertEntry({ id: entry.id, transcriptStatus: "error", transcriptPath });
+    throw err;
   }
-  console.log(`  matched ${matched.length} segment(s) against the RSS feed.`);
-  if (skipped.length) console.log(`  skipped (no RSS match, likely a full episode/Short/other upload): ${skipped.join(" | ")}`);
+}
 
-  const known = new Set(db.listEntries().map((e) => e.sourceId).filter(Boolean));
-  // Import oldest-first so entry creation order follows broadcast time.
-  const toImport = matched
-    .filter((seg) => !known.has(seg.videoId))
-    .sort((a, b) => new Date(a.pubDate) - new Date(b.pubDate));
-  console.log(`  ${matched.length - toImport.length} already imported, ${toImport.length} new.`);
+async function importOne(item) {
+  const dayInfo = dayInfoFromPubDate(item.pubDate);
+  if (!dayInfo) throw new Error(`unparseable pubDate "${item.pubDate}"`);
+  const dayId = `${SHOW_ID}-${dayInfo.dateId}`;
+  if (!db.getEntry(dayId)) {
+    await createCollection({ title: dayInfo.title, id: dayId, parentId: SHOW_ID });
+    console.log(`Created day entry "${dayId}".`);
+  }
+  const { dir, filePath } = await downloadEnclosure(item.enclosure, item.title);
+  try {
+    const entry = await importMedia({ sourcePath: filePath, type: "audio", title: item.title, parentId: dayId });
+    db.upsertEntry({ id: entry.id, sourceId: item.guid || item.enclosure });
+    console.log(`Imported "${item.title}" as "${entry.id}".`);
+    return entry;
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
 
-  if (dryRun) {
-    for (const seg of toImport) {
-      const dayInfo = dayInfoFromPubDate(seg.pubDate);
-      console.log(`  would import "${seg.title}" (${seg.url}) -> day ${dayInfo ? dayInfo.dateId : "?"}`);
+// ---------------------------------------------------------------------------
+// sync()
+//
+// Returns { locked, missing, repairs, imported, repaired, failed, pruned }.
+// onProgress receives { phase, current, total, title } with phases "fetch",
+// "importing", "repairing", "prune", "done".
+// ---------------------------------------------------------------------------
+async function sync({ onProgress = () => {}, dryRun = false, limit = Infinity } = {}) {
+  const report = (p) => {
+    heartbeatLock();
+    try { onProgress(p); } catch { /* a broken listener must not stop the run */ }
+  };
+
+  if (!dryRun && !acquireLock()) {
+    console.log("pbs-sync: another run is already in progress — skipping.");
+    return { locked: true, missing: 0, repairs: 0, imported: 0, repaired: 0, failed: 0, pruned: 0 };
+  }
+
+  try {
+    report({ phase: "fetch" });
+    console.log("Fetching PBS segments RSS...");
+    const rss = parseSegmentsRss(await fetchText(PBS_SEGMENTS_RSS));
+    console.log(`  ${rss.length} item(s) in the segments RSS.`);
+
+    const known = new Set();
+    const titles = new Set();
+    const allEntries = db.listEntries();
+    for (const e of allEntries) {
+      if (e.sourceId) known.add(e.sourceId);
+      if (e.type !== "collection") titles.add(normalizeTitle(e.title || ""));
     }
-    console.log("Dry run — nothing downloaded, transcribed, or written to the library.");
-    return;
-  }
 
-  if (toImport.length && !db.getEntry(SHOW_ID)) {
-    await createCollection({ title: SHOW_TITLE, id: SHOW_ID });
-    console.log(`Created show entry "${SHOW_ID}".`);
-  }
-
-  let failures = 0;
-  for (const seg of toImport) {
-    const dayInfo = dayInfoFromPubDate(seg.pubDate);
-    if (!dayInfo) {
-      console.log(`  skipping "${seg.title}" — unparseable pubDate "${seg.pubDate}"`);
-      continue;
+    const cutoff = Date.now() - KEEP_DAYS * 864e5;
+    const missing = [];
+    for (const it of rss) {
+      if (!it.enclosure) continue;
+      const when = new Date(it.pubDate).getTime();
+      if (isNaN(when) || when < cutoff) continue;   // older than we keep: never refetch
+      if (known.has(it.guid) || known.has(it.enclosure) || titles.has(normalizeTitle(it.title))) continue;
+      missing.push({ ...it, when });
     }
-    const dayId = `${SHOW_ID}-${dayInfo.dateId}`;
-    try {
-      if (!db.getEntry(dayId)) {
-        await createCollection({ title: dayInfo.title, id: dayId, parentId: SHOW_ID });
-        console.log(`Created day entry "${dayId}".`);
-      }
+    missing.sort((a, b) => b.when - a.when);   // newest day first
 
-      console.log(`Downloading "${seg.title}" (${seg.url}) ...`);
-      const { dir, filePath } = downloadWithYtDlp(seg.url, seg.videoId);
+    const repairs = [];
+    for (const e of allEntries) {
+      if (e.type === "collection") continue;
+      if (transcriptIsReadable(e)) continue;
+      if (e.filePath && fs.existsSync(e.filePath)) repairs.push(e);
+      else console.warn(`pbs-sync: no media file for "${e.id}" — cannot repair.`);
+    }
+
+    console.log(`  ${missing.length} missing, ${repairs.length} to repair.`);
+
+    if (dryRun) {
+      for (const it of missing) console.log(`  would import "${it.title}" (${it.pubDate})`);
+      for (const e of repairs) console.log(`  would repair "${e.id}"`);
+      console.log("Dry run — nothing downloaded, transcribed, or written to the library.");
+      return { locked: false, missing: missing.length, repairs: repairs.length, imported: 0, repaired: 0, failed: 0, pruned: 0 };
+    }
+
+    if (missing.length && !db.getEntry(SHOW_ID)) {
+      await createCollection({ title: SHOW_TITLE, id: SHOW_ID });
+      console.log(`Created show entry "${SHOW_ID}".`);
+    }
+
+    let imported = 0, repaired = 0, failed = 0;
+    const toImport = missing.slice(0, limit);
+    for (let i = 0; i < toImport.length; i++) {
+      report({ phase: "importing", current: i + 1, total: toImport.length, title: toImport[i].title });
       try {
-        // Verbatim Crisper transcription keeps fillers ("you know", "um") in
-        // the reference, which is what the dictation checker scores against.
-        const entry = await importMedia({ sourcePath: filePath, type: "movie", title: seg.title, parentId: dayId });
-        db.upsertEntry({ id: entry.id, sourceId: seg.videoId });
-        console.log(`Imported "${seg.title}" as "${entry.id}".`);
-      } finally {
-        fs.rmSync(dir, { recursive: true, force: true });
+        await importOne(toImport[i]);
+        imported++;
+        titles.add(normalizeTitle(toImport[i].title));
+      } catch (err) {
+        failed++;
+        console.error(`  failed to import "${toImport[i].title}": ${err.message}`);
       }
-    } catch (err) {
-      console.error(`  failed to import "${seg.title}": ${err.message}`);
-      failures++;
     }
-  }
 
-  pruneOldDays();
+    for (let i = 0; i < repairs.length; i++) {
+      report({ phase: "repairing", current: i + 1, total: repairs.length, title: repairs[i].title || repairs[i].id });
+      try {
+        await repairEntry(repairs[i]);
+        repaired++;
+        console.log(`Repaired "${repairs[i].id}".`);
+      } catch (err) {
+        failed++;
+        console.error(`  failed to repair "${repairs[i].id}": ${err.message}`);
+      }
+    }
 
-  // A run where every download failed still finished, so it used to exit 0 and
-  // look like a success to cron. That is how the yt-dlp PATH bug above stayed
-  // invisible: eleven segments failed in a single morning and nothing reported
-  // it. Per-segment failures are survivable — one bad video should not abort the
-  // run — but they must reach the exit code.
-  if (failures) {
-    console.error(`${failures} of ${toImport.length} segment(s) failed to import.`);
-    process.exitCode = 1;
+    report({ phase: "prune" });
+    const pruned = pruneOldDays();
+    report({ phase: "done", imported, repaired, failed, pruned });
+    return { locked: false, missing: missing.length, repairs: repairs.length, imported, repaired, failed, pruned };
+  } finally {
+    if (!dryRun) releaseLock();
   }
 }
 
 if (require.main === module) {
-  sync({ dryRun: process.argv.includes("--dry-run") }).catch((err) => {
-    console.error(err);
-    process.exitCode = 1;
-  });
+  const args = process.argv.slice(2);
+  const dryRun = args.includes("--dry-run");
+  const limitArg = args.find((a) => a.startsWith("--limit="));
+  const limit = limitArg ? Number(limitArg.split("=")[1]) || Infinity : Infinity;
+  sync({ dryRun, limit })
+    .then((r) => console.log("sync result:", JSON.stringify(r)))
+    .catch((err) => {
+      console.error(err);
+      process.exitCode = 1;
+    });
 }
+
+module.exports = { sync, KEEP_DAYS };
