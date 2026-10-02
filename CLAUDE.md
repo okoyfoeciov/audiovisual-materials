@@ -4,86 +4,29 @@ Guidance for Claude Code (and any other agent) working in this repository.
 
 ---
 
-## 🔴 Remote access rule — read this before touching the remote
+## Remote access — `gh` directly
 
-**ALL INTERACTIONS WITH THE REMOTE MUST USE THE `GH_TOKEN` IN THE `.env` FILE.**
-
-**DO NOT TRUST OR USE ANYTHING FROM `gh auth status`.**
-
-This is not a style preference. It is a correctness rule, and it is enforced by
-config, not just by this document. (Same pattern as `~/parakeet-ov`'s
-`CLAUDE.md` — copied here because this machine has the identical problem.)
-
-### Why
-
-This machine's GitHub credential store holds **two** accounts:
-
-| account | where it lives | correct for this repo? |
-|---|---|---|
-| `okoyfoeciov` | keyring **and** `.env` | ✅ yes |
-| `khiemea` | keyring, and `~/.gitconfig` `[user]` | ❌ no |
-
-`~/.gitconfig` globally routes github.com credentials through
-`!/usr/bin/gh auth git-credential`, and `gh`'s "active account" can silently
-change (`gh auth switch`, a re-login, a keyring refresh, another repo's
-session). A push that quietly resolves to `khiemea` lands commits on the wrong
-identity, or fails with a confusing 403. `gh auth status` reports *keyring*
-state — it says nothing about what this repo is supposed to use.
-
-`.env` is the single source of truth. Nothing else is.
-
-### How it is enforced
-
-`git init` was followed by:
-
-```bash
-git config --local credential.https://github.com.helper ""            # reset inherited helpers
-git config --local --add credential.https://github.com.helper \
-    "/home/james/daily-dictation/.githelpers/credential-from-env.sh"
-```
-
-The empty first value **resets** the helper list inherited from `~/.gitconfig`,
-so `gh auth git-credential` is not consulted at all inside this repo.
-`.githelpers/credential-from-env.sh` reads `GH_TOKEN` out of `.env` and answers
-with `username=x-access-token` + that token.
-
-**Do not delete that helper.** It is the mechanism, not a convenience — without
-it git falls straight back to the global `gh auth git-credential`, which is the
-exact failure this rule exists to prevent.
+Auth is the `gh` CLI via the OS keyring (single account `okoyfoeciov` —
+verified with `gh auth status`). No tokens in files, no credential helpers:
+this repo has no local `credential.helper` config by design, so plain
+`git push` / `git fetch` just work through the global
+`gh auth git-credential` helper.
 
 ### Rules for agents
 
-1. **Push / fetch / pull:** just run `git push` / `git fetch`. The local helper
-   supplies the `.env` token automatically. Do not pass `-c credential.helper=`,
-   do not use `gh auth setup-git`, do not embed a token in the remote URL.
-2. **GitHub API calls** (creating repos, reading repo metadata, issues):
-   read the token out of `.env` and pass it explicitly.
-
-   ```bash
-   GH_TOKEN="$(grep -m1 '^GH_TOKEN=' .env | cut -d= -f2-)"
-   curl -sS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-        https://api.github.com/user
-   ```
-
-   If you use the `gh` CLI, it must be invoked with the token injected from
-   `.env` — `GH_TOKEN="$GH_TOKEN" gh ...` — because an explicit `GH_TOKEN`
-   environment variable overrides the keyring. Bare `gh` is not acceptable.
+1. **Push / fetch / pull:** just run `git push` / `git fetch`. Do not embed a
+   token in the remote URL, do not pass `-c credential.helper=`.
+2. **GitHub API calls:** use bare `gh` (e.g. `gh repo view`). Do not set a
+   `GH_TOKEN` env var — it would override the keyring. Never paste tokens
+   into `curl` commands, logs, terminal output, commit messages, or a PR body.
 3. **Never run** `gh auth login`, `gh auth switch`, `gh auth setup-git`, or
    `gh auth token` as part of work in this repo.
-4. **Never** treat `gh auth status` output as authoritative for anything. If you
-   need to know who the token is, ask GitHub with the token itself:
-   `curl -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/user`.
-5. **`.env` is gitignored and must stay that way.** Never commit it, never echo
-   the token into logs, terminal output, commit messages, or a PR body.
-6. `.env` holds exactly one line, and the helper expects that shape:
-
-   ```
-   GH_TOKEN=gho_xxxxxxxxxxxx
-   ```
+4. If `gh auth status` ever shows anything other than the single
+   `okoyfoeciov` account, stop and ask before touching the remote.
 
 ### Commit identity
 
-Set locally, so the global `khiemea` identity never applies here:
+Set locally (explicit beats global):
 
 ```
 user.name  = okoyfoeciov
