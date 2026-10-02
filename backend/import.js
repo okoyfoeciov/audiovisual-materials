@@ -8,8 +8,8 @@
 //
 // importMedia() copies the source into library/<type>s/<slug>/ (the
 // original is never moved or deleted), registers it in the DB, then
-// transcribes it once — verbatim Azure MAI-Transcribe-2 (see
-// backend/transcribe.js) — and stores the transcript alongside the file.
+// transcribes it once — verbatim via llm-service (see backend/transcribe.js)
+// — and stores the transcript alongside the file.
 
 const fs = require("fs");
 const path = require("path");
@@ -78,7 +78,7 @@ async function importMedia({ sourcePath, type, title, id, parentId } = {}) {
   const transcriptPath = path.join(destDir, "transcript.json");
   db.upsertEntry({ id: slug, transcriptStatus: "processing", transcriptPath });
 
-  console.log("Starting transcription (Azure MAI-Transcribe-2 verbatim — single-shot, up to ~2 h)...");
+  console.log("Starting transcription (llm-service verbatim — single-shot, up to ~2 h)...");
   try {
     const transcript = await transcribeVerbatim(destPath, {
       onProgress: (msg) => console.log(`  [transcribe] ${msg}`),
