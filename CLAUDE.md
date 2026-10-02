@@ -138,7 +138,7 @@ loopback; library lives in `<repo>/library` in dev, `<userData>/library`
 packaged — see `backend/paths.js`). `backend/dictation.js` holds the session-partition algorithm, the scheduler,
 and the WER grader. `backend/pbs-sync.js` is the catch-up sync: the embedded
 backend runs it on app launch and every few hours, pulling new PBS segments
-from the segments RSS audio with verbatim Crisper transcription (via
+from the segments RSS audio with verbatim Azure MAI-Transcribe-2 transcription (via
 `backend/import.js`), repairing broken transcripts, and pruning days past
 `KEEP_DAYS`.
 `main.js` is the Electron shell. Avoid changing `app-player.js`'s explanation

@@ -332,7 +332,8 @@ function resolveItem(state, session, { rekey = false } = {}) {
 // Transcript hygiene
 // ---------------------------------------------------------------------------
 
-// Chyron / lower-third speaker labels. CrisperWhisper transcribes the on-screen
+// Chyron / lower-third speaker labels. Legacy CrisperWhisper transcripts render
+// the on-screen
 // name card as speech, so the reference ends up containing "NICK TIMORES, Chief
 // Economics Correspondent, The Wall Street Journal" — text nobody said at that
 // moment and nobody can be expected to spell. Two or more consecutive all-caps
@@ -448,7 +449,7 @@ function looksLikeNameCard(words, i, j) {
 /**
  * Drop words duplicated by line stitching.
  *
- * CrisperWhisper repeats a word across its own line boundary, so the reference
+ * Legacy CrisperWhisper output repeats a word across its own line boundary, so the
  * reads "Nepal's Nepal's army says…" and a learner who transcribes what was
  * actually said takes a deletion for it. The duplicate is distinguishable from
  * genuine disfluency by duration, not by text: a stitched copy carries the
@@ -1176,7 +1177,7 @@ function preNormalize(text) {
     .replace(/[‘’]/g, "'")
     .replace(/[“”]/g, '"');
 
-  // CrisperWhisper spacing artefacts: "U .S.", "$2 .5 billion", "2 ,000",
+  // Legacy transcriber spacing artefacts (CrisperWhisper): "U .S.", "$2 .5 billion", "2 ,000",
   // "small -town". The transcriber emits a space before the punctuation it
   // inserts, which would otherwise split one number into several tokens and
   // inflate the reference length the WER denominator uses.
