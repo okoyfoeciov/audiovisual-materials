@@ -4,7 +4,7 @@
 // import time (backend/import.js, backend/pbs-sync.js) instead of once per
 // playback session.
 //
-//   transcribeVerbatim() — verbatim transcript via llm-service's
+//   transcribeVerbatim() — verbatim transcript via ai-service's
 //                          POST /api/transcribe-verbatim (127.0.0.1:8770 —
 //                          Azure MAI-Transcribe-2 under the hood, word
 //                          timestamps, verbatim), single-shot multipart POST,
@@ -12,12 +12,12 @@
 //                          pbs-sync, since the dictation checker scores against
 //                          the verbatim reference.
 //
-// This app holds no Azure credentials at all: the key lives in llm-service's
-// own llm-service.env and the model call happens over there. The response
+// This app holds no Azure credentials at all: the key lives in ai-service's
+// own ai-service.env and the model call happens over there. The response
 // already carries this repo's shape { lines, words }, so what comes back is
 // validated and returned as-is.
 //
-// Error bodies are llm-service's own shape ({error: "..."}), since nothing
+// Error bodies are ai-service's own shape ({error: "..."}), since nothing
 // here renders to a browser.
 //
 // No result cache here: every transcript produced is persisted permanently at
@@ -30,15 +30,15 @@ const fs = require("fs/promises");
 const { statSync } = require("fs");
 const path = require("path");
 
-// llm-service caps the audio at Azure Fast Transcription's ceiling.
+// ai-service caps the audio at Azure Fast Transcription's ceiling.
 const TX_MAX = 300 * 1024 * 1024;
 const TX_TIMEOUT_MS = 600 * 1000;
 const TX_RETRIES = 3;
 
-// llm-service's local address. Same loopback contract as the explain/mic
+// ai-service's local address. Same loopback contract as the explain/mic
 // proxies in backend/server.js — this machine only, no auth.
-const LLM_SERVICE_URL =
-  process.env.LLM_SERVICE_URL || "http://127.0.0.1:8770";
+const AI_SERVICE_URL =
+  process.env.AI_SERVICE_URL || "http://127.0.0.1:8770";
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -64,14 +64,14 @@ function validShape(t) {
   );
 }
 
-// The verbatim transcriber for daily dictation — llm-service's
+// The verbatim transcriber for daily dictation — ai-service's
 // /api/transcribe-verbatim. A single-shot synchronous multipart POST: PBS
 // clips fit the 300 MB cap, so there is no chunked upload protocol and no
 // polling loop.
 async function transcribeVerbatim(filePath, { onProgress = () => {} } = {}) {
   const size = statSync(filePath).size;
   if (size > TX_MAX) throw new Error("File is too large to transcribe (over 300 MB).");
-  onProgress("uploading to llm-service (verbatim)...");
+  onProgress("uploading to ai-service (verbatim)...");
   const buf = await fs.readFile(filePath);
   const form = new FormData();
   form.append("audio", new Blob([buf]), path.basename(filePath));
@@ -80,7 +80,7 @@ async function transcribeVerbatim(filePath, { onProgress = () => {} } = {}) {
   for (let attempt = 0; attempt < TX_RETRIES; attempt++) {
     let res = null;
     try {
-      res = await fetch(`${LLM_SERVICE_URL}/api/transcribe-verbatim`, {
+      res = await fetch(`${AI_SERVICE_URL}/api/transcribe-verbatim`, {
         method: "POST",
         body: form,
         signal: AbortSignal.timeout(TX_TIMEOUT_MS),

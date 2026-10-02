@@ -129,7 +129,7 @@ loop plays inside of.
 
 `app-player.js` owns the shared `<audio>` transport (play/pause/seek/time,
 mobile collapse, keyboard) and the explanation panel (via `/api/explain`,
-`/api/pron`, `/api/credits`, all proxied to llm-service on 127.0.0.1:8770); `app-dictation.js` owns
+`/api/pron`, `/api/credits`, all proxied to ai-service on 127.0.0.1:8770); `app-dictation.js` owns
 the notepad UI, the session loop, and grading, and reaches the panel through
 `window.__dictationExplain` / `window.__dictationCloseExplanations`.
 `app-base.js` resolves the API base URL (see its own header comment) — this
@@ -138,7 +138,7 @@ loopback; library lives in `<repo>/library` in dev, `<userData>/library`
 packaged — see `backend/paths.js`). `backend/dictation.js` holds the session-partition algorithm, the scheduler,
 and the WER grader. `backend/pbs-sync.js` is the catch-up sync: the embedded
 backend runs it on app launch and every few hours, pulling new PBS segments
-from the segments RSS audio with verbatim transcription via llm-service
+from the segments RSS audio with verbatim transcription via ai-service
 (`backend/transcribe.js` → `POST 127.0.0.1:8770/api/transcribe-verbatim`,
 Azure MAI-Transcribe-2 under the hood — this app holds no Azure credentials),
 repairing broken transcripts, and pruning days past `KEEP_DAYS` (7).

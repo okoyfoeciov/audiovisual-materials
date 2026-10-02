@@ -7,8 +7,8 @@
 // right here and the recorded clip plays from a real <audio> element.
 //
 // The transcription endpoint is this app's own backend, which proxies
-// /api/transcribe straight through to llm-service — so the response
-// shape (including a failed transcription's detail) is llm-service's, and
+// /api/transcribe straight through to ai-service — so the response
+// shape (including a failed transcription's detail) is ai-service's, and
 // failMessage() below maps it.
 
 (() => {
@@ -417,8 +417,8 @@
     }
   }
 
-  // The backend proxies straight through to llm-service's /api/transcribe, so the
-  // response shape (Groq status included) is llm-service's.
+  // The backend proxies straight through to ai-service's /api/transcribe, so the
+  // response shape (Groq status included) is ai-service's.
   function failMessage(status, data) {
     const gs = data && data.groqStatus;
     let reason;

@@ -5,7 +5,7 @@
 // (/api/dictation/*), the segment stream (/api/library/:id/stream), the
 // explanation/pronunciation/credit proxies (/api/explain, /api/pron,
 // /api/credits), and the mic transcription proxy (/api/transcribe). The
-// renderer never talks to llm-service or any other host directly.
+// renderer never talks to ai-service or any other host directly.
 
 (() => {
   "use strict";

@@ -4,7 +4,7 @@
 // capable, for seeking) for Daily Dictation playback, serves the dictation
 // session/grading/scheduling API, runs the catch-up sync for new PBS segments
 // (backend/pbs-sync.js), and proxies the explanation, pronunciation, credit,
-// and mic-transcription calls through to llm-service. Embedded in the Electron app
+// and mic-transcription calls through to ai-service. Embedded in the Electron app
 // — main.js starts it in-process via start() before the window loads, so the
 // app is a single local-only program with no separate backend process.
 // Reached at the loopback URL app-base.js resolves.
@@ -16,9 +16,9 @@ const paths = require("./paths");
 const pbsSync = require("./pbs-sync");
 
 const DEFAULT_PORT = Number(process.env.PORT) || 8768;
-// llm-service's local server, which backs the explain/pron/credits/transcribe
+// ai-service's local server, which backs the explain/pron/credits/transcribe
 // proxies below (word explanations, MW pronunciation badges, Groq mic clips).
-const LLM_SERVICE_BASE = "http://127.0.0.1:8770";
+const AI_SERVICE_BASE = "http://127.0.0.1:8770";
 const app = express();
 
 app.use((req, res, next) => {
@@ -32,13 +32,13 @@ app.use((req, res, next) => {
 
 // The explain panel (word/phrase explanations, MW pronunciation badges,
 // credit warnings) is shared by Daily Dictation's reference-word lookup, so
-// those three routes are transparently proxied through to llm-service here. Raw
+// those three routes are transparently proxied through to ai-service here. Raw
 // body passthrough (not express.json()) so arbitrary request shapes forward
 // untouched.
 const EXPLAIN_PATHS = ["/api/explain", "/api/pron", "/api/credits"];
 app.all(EXPLAIN_PATHS, express.raw({ type: () => true, limit: "10mb" }), async (req, res) => {
   try {
-    const upstream = await fetch(`${LLM_SERVICE_BASE}${req.originalUrl}`, {
+    const upstream = await fetch(`${AI_SERVICE_BASE}${req.originalUrl}`, {
       method: req.method,
       headers: req.get("Content-Type") ? { "Content-Type": req.get("Content-Type") } : {},
       body: ["GET", "HEAD"].includes(req.method) ? undefined : req.body,
@@ -55,12 +55,12 @@ app.all(EXPLAIN_PATHS, express.raw({ type: () => true, limit: "10mb" }), async (
 
 // The floating microphone button's transcription call (mic.js) — a single
 // short recording POSTed as a raw audio blob, proxied straight through to
-// llm-service's own /api/transcribe (a one-shot short-clip endpoint, capped
+// ai-service's own /api/transcribe (a one-shot short-clip endpoint, capped
 // client-side at 60s). Raw body passthrough, same shape as the EXPLAIN_PATHS
 // proxy above, sized for a ~60s opus clip (well under 1MB) with headroom.
 app.post("/api/transcribe", express.raw({ type: () => true, limit: "20mb" }), async (req, res) => {
   try {
-    const upstream = await fetch(`${LLM_SERVICE_BASE}/api/transcribe`, {
+    const upstream = await fetch(`${AI_SERVICE_BASE}/api/transcribe`, {
       method: "POST",
       headers: req.get("Content-Type") ? { "Content-Type": req.get("Content-Type") } : {},
       body: req.body,
