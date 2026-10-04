@@ -1,0 +1,103 @@
+# CD: .deb + .dmg built from latest main, published to the v1.0.7 tag.
+#
+# Runs on every push to main (plus manual dispatch). It builds the .deb
+# on Linux and the .dmg on macOS (electron-builder ad-hoc signs when no
+# Developer ID is present; no notarization, same as ~/cairn's ruling),
+# then (re)publishes both to the v1.0.7 release, clobbering the previous
+# assets — same pattern as ~/source-viewer's release.yml.
+#
+# No version automation: there is exactly one version, 1.0.7, and this
+# file names it outright. Bump package.json + the tag below together.
+
+name: Release 1.0.7
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Latest push wins: a newer run cancels the older one's build, and the
+# publish step uploads with --clobber, so a cancelled run can never leave
+# the release half-updated.
+concurrency:
+  group: release-1.0.7
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  deb:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install packaging tools
+        run: sudo apt-get update && sudo apt-get install -y fakeroot
+
+      - name: Build the .deb
+        run: npm run dist:linux
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb
+          path: dist/*.deb
+          if-no-files-found: error
+
+  dmg:
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the .dmg
+        run: npm run dist:mac
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dmg
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  publish:
+    needs: [deb, dmg]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # gh release create tags v1.0.7, and tagging needs the git directory.
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish the v1.0.7 release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd dist
+          if ! gh release view v1.0.7 >/dev/null 2>&1; then
+            gh release create v1.0.7 \
+              --title "Daily Dictation 1.0.7" \
+              --notes "Daily Dictation 1.0.7 build from latest main. Debian: sudo apt install ./daily-dictation_1.0.7_amd64.deb. macOS: open the .dmg (ad-hoc signed, no notarization)." \
+              --latest
+          fi
+          gh release upload v1.0.7 ./*.deb ./*.dmg --clobber

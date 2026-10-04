@@ -45,13 +45,13 @@ const SHOW_TITLE = "PBS NewsHour";
 // An item retires after three spaced passes, at SM-2 intervals of 1 then 6 days,
 // so the fastest possible path from first exposure to retirement is 7 days.
 // Failures requeue in 20 minutes; what actually stretches the window is
-// practising irregularly, which is the normal case. 7 keeps the first-run
-// backlog small (~15 segments, cents on Azure) at the cost of that margin:
-// items still due past day 7 are pruned with their history, so irregular
+// practising irregularly, which is the normal case. 3 keeps the first-run
+// backlog small (~6 segments, cents on Azure) at the cost of that margin:
+// items still due past day 3 are pruned with their history, so irregular
 // practicers re-meet material as unseen instead of as scheduled reviews —
 // and a mastered item never needs its audio again, which is why a small
 // number works and no permanent archive is needed.
-const KEEP_DAYS = 7;
+const KEEP_DAYS = 3;
 
 // A run heartbeats the lock before every item; a lock whose owner is gone, or
 // that is older than this, belongs to a dead run and can be taken over.

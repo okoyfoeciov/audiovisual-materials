@@ -84,29 +84,27 @@ backend runs it on app launch and every few hours, pulling new PBS segments
 from the segments RSS audio with verbatim transcription via ai-service
 (`backend/transcribe.js` → `POST 127.0.0.1:8770/api/transcribe-verbatim`,
 Azure MAI-Transcribe-2 under the hood — this app holds no Azure credentials),
-repairing broken transcripts, and pruning days past `KEEP_DAYS` (7).
+repairing broken transcripts, and pruning days past `KEEP_DAYS` (3).
 `main.js` is the Electron shell. Avoid changing `app-player.js`'s explanation
 engine unless the task requires it.
 
 ## Packaging
 
-### This project ships no prebuilt artifacts
+### CI/CD (GitHub Actions, same pattern as ~/source-viewer)
 
-There are no GitHub releases here and no binaries attached to the repo, and
-none should be created. Every machine that wants the app pulls this source and
-builds its own package — on macOS a `.dmg`, on Linux a `.deb`. **Do not create
-a release, do not upload an artifact, do not cut a version tag as one.**
+`.github/workflows/ci.yml` runs on pushes to `main` and on PRs: `npm ci`
+plus `node --check` over the plain-JS frontend and `backend/*.js`. There is
+no TypeScript and no unit-test suite, so that syntax check is the whole gate.
 
-The reason is the cross-build wall documented below: neither platform can build
-the other's package here, so a release could only ever carry the artifact for
-whichever machine happened to cut it — which is exactly the half-empty release
-this repo's history ended up with. Building where you run it is both simpler
-and always complete.
+`.github/workflows/release.yml` runs on every push to `main` (plus manual
+dispatch): it builds the `.deb` on `ubuntu-latest` via `npm run dist:linux`
+and the `.dmg` on `macos-14` via `npm run dist:mac`, then (re)publishes both
+to the single fixed `v1.0.7` tag with `--clobber`. Bump `package.json`'s
+`version` and the tag in `release.yml` together when the version changes.
 
-Seven releases (`v1.0.0`–`v1.0.6`) existed until they were deliberately
-deleted. The `vX.Y.Z` tags GitHub created for them may still be on the remote;
-they point at real commits and are historical markers only — nothing builds
-from them or expects them.
+The cross-build wall below is why CI builds each platform on its own
+runner instead of cross-building: neither platform can build the other's
+package locally.
 
 ### Build
 
@@ -116,10 +114,9 @@ npm run dist:linux   # → dist/daily-dictation_<version>_amd64.deb
 npm run dist:mac     # → dist/*.dmg (plus a .zip side-artifact) — Mac only, see below
 ```
 
-`version` in `package.json` now only names the output file. It used to be
-bumped one patch digit per release; with releases gone there is nothing to bump
-it *for*, so change it when you want a different artifact name — not on every
-commit, as the old rule had it.
+`version` in `package.json` names the output file and the release tag
+(`v1.0.7`). Bump it together with `.github/workflows/release.yml` — not on
+every commit.
 
 ### Why each platform must build its own
 
