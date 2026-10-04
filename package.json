@@ -7,8 +7,8 @@
   "scripts": {
     "start": "electron .",
     "backend": "node backend/server.js",
-    "dist:mac": "electron-builder --mac",
-    "dist:linux": "electron-builder --linux"
+    "dist:mac": "electron-builder --mac --publish never",
+    "dist:linux": "electron-builder --linux --publish never"
   },
   "author": "james <khiem.le@stanyangroup.com>",
   "license": "UNLICENSED",
