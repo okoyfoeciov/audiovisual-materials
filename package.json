@@ -37,12 +37,12 @@
       "icon.svg",
       "build/icons/256x256.png"
     ],
+    "afterPack": "build/adhoc-sign.js",
     "mac": {
       "target": "dmg",
       "category": "public.app-category.utilities",
       "icon": "build/icon.png",
-      "identity": "-",
-      "hardenedRuntime": false,
+      "identity": null,
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Used by the microphone button to record short voice clips for transcription."
       }
