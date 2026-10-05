@@ -418,16 +418,20 @@
   .ab-skip:active { transform: scale(0.94); }
   .ab-skip:disabled { opacity: 0.4; cursor: default; }
   .ab-skip svg { width: 20px; height: 20px; display: block; }
-  /* Loop the dictation segment. Dim like the other utility icons when off;
-     switching it on turns it the accent orange the play button already wears,
-     and that colour IS the "it is looping" signal. Disabled until a session
-     loads. */
-  .ab-loop { color: var(--text-soft); }
+  /* Loop the dictation segment. Dim when off; when armed it becomes a
+     filled stone chip (dark glyph on light accent) with a heavier stroke,
+     so the on/off delta is unmissable. Disabled until a session loads. */
+  .ab-loop { color: #4c4b46; border-radius: 8px; }
   .ab-loop:hover { color: var(--text); }
   .ab-loop:active { transform: scale(0.94); }
   /* After :hover deliberately — equal specificity, so the later rule wins and a
      hover cannot dim an armed loop back down to the "off" colour. */
-  .ab-loop.active { color: var(--accent); }
+  .ab-loop.active {
+    color: var(--accent-ink);
+    background: var(--accent);
+  }
+  .ab-loop.active:hover { color: var(--accent-ink); }
+  .ab-loop.active svg { stroke-width: 2.6; }
   .ab-loop:disabled { opacity: 0.4; cursor: default; }
   .ab-loop svg { width: 20px; height: 20px; display: block; }
   /* Collapse the player (mobile only). A chevron-down that sits at the far right
