@@ -1,8 +1,9 @@
 # CD: .deb + .dmg built from latest main, published to the v1.0.7 tag.
 #
 # Runs on every push to main (plus manual dispatch). It builds the .deb
-# on Linux and the .dmg on macOS (electron-builder ad-hoc signs when no
-# Developer ID is present; no notarization, same as ~/cairn's ruling),
+# on Linux and the .dmg on macOS (ad-hoc signed via mac.identity "-" in package.json;
+# electron-builder does NOT fall back to ad-hoc on its own, and an unsigned
+# arm64 app shows "is damaged" on macOS. No notarization.),
 # then (re)publishes both to the v1.0.7 release, clobbering the previous
 # assets — same pattern as ~/source-viewer's release.yml.
 #
