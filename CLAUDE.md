@@ -37,7 +37,7 @@ Check with `git config --local --list` before the first commit of a session.
 
 ### Remote
 
-`origin` is `https://github.com/okoyfoeciov/audiovisual-materials.git` (private).
+`origin` is `https://github.com/okoyfoeciov/daily-dictation.git` (private).
 
 ---
 
